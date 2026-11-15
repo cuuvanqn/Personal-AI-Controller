@@ -245,6 +245,9 @@ export function openCustomBrowser(input: {
   const directory = (input.profile || "").trim();
   if (directory) args.push(`--profile-directory=${directory}`);
   if (input.extraArgs) args.push(...input.extraArgs);
+  if (!args.some((a) => a.startsWith("--remote-debugging-port"))) {
+    args.push("--remote-debugging-port=9222");
+  }
   args.push(url);
   const child = spawnBrowser(browserPath, args);
   const profile: ChromeProfile = {
@@ -299,8 +302,11 @@ export function openChromeProfile(input: {
     "--no-first-run",
     "--no-default-browser-check",
     ...(input.extraArgs || []),
-    url,
   ];
+  if (!args.some((a) => a.startsWith("--remote-debugging-port"))) {
+    args.push("--remote-debugging-port=9222");
+  }
+  args.push(url);
   // Chỉ thêm --user-data-dir khi user chỉ định khác mặc định, để
   // không vô tình tách Chrome đang chạy ra một user-data-dir khác
   // (khi đó --profile-directory sẽ bị Chrome đang chạy bỏ qua).

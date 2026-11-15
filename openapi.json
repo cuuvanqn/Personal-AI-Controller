@@ -1807,6 +1807,86 @@
           }
         }
       }
+    },
+    "/api/activity/v1/tasks/dispatch": {
+      "post": {
+        "operationId": "dispatchTaskToIde",
+        "summary": "Giao task trực tiếp từ ChatGPT Web cho Antigravity IDE Worker",
+        "description": "Đưa một task lập trình hoặc sửa lỗi vào hàng đợi nền cho Antigravity IDE thực thi (hoàn toàn chạy ngầm, không cần mở màn hình máy tính hay dùng CUA)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "description": "Mục tiêu cụ thể của task (Ví dụ: 'Thêm endpoint /api/user', 'Sửa bug login', 'redeploy daemon')"
+                  },
+                  "details": {
+                    "type": "string",
+                    "description": "Mô tả chi tiết các bước, tiêu chí nghiệm thu hoặc ngữ cảnh kỹ thuật"
+                  },
+                  "filesHint": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Danh sách đường dẫn các file gợi ý cần chỉnh sửa"
+                  },
+                  "verify": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Danh sách lệnh kiểm thử (verify gate) cần chạy trước khi đánh dấu hoàn thành"
+                  },
+                  "chatId": {
+                    "type": "string",
+                    "description": "ID cuộc trò chuyện (mặc định: 'chatgpt-web')"
+                  }
+                },
+                "required": [
+                  "goal"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task đã được đưa vào hàng đợi thành công"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/tasks/queue/clear": {
+      "post": {
+        "operationId": "clearTaskQueue",
+        "summary": "Dọn dẹp sạch toàn bộ hàng đợi task cho IDE",
+        "description": "Hủy toàn bộ task pending/running trong hàng đợi và SQLite để tránh nghẽn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Lý do dọn dẹp hàng đợi"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hàng đợi đã được dọn sạch thành công"
+          }
+        }
+      }
     }
   }
 }

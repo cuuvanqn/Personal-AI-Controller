@@ -271,6 +271,11 @@ export function recoverBridgeTasks(
   for (const row of rows) {
     const task = rowToRecovered(row);
     if (task.status === "pending") {
+      const PENDING_TTL_MS = 24 * 3600 * 1000;
+      if (nowMs - task.createdAt > PENDING_TTL_MS) {
+        db.run("UPDATE tasks SET status = 'failed' WHERE id = ?", [task.id]);
+        continue;
+      }
       pending.push(task);
       continue;
     }
@@ -340,6 +345,12 @@ export function sweepStaleTasks(
   const bridgeBlocked: string[] = [];
   const planRecovered: string[] = [];
   const planBlocked: string[] = [];
+
+  // Tự động purge các task pending quá 24h để tránh nghẽn hàng đợi (FIFO)
+  try {
+    const PENDING_TTL_MS = 24 * 3600 * 1000;
+    db.run("UPDATE tasks SET status = 'failed' WHERE status = 'pending' AND (? - created_at) > ?", [nowMs, PENDING_TTL_MS]);
+  } catch {}
 
   const bridgeRows = db.query("SELECT * FROM tasks WHERE status = 'running'").all() as Record<string, unknown>[];
   for (const row of bridgeRows) {

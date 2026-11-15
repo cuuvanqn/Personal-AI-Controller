@@ -6,7 +6,7 @@ export { registerVpsTools } from "./vps";
 export { registerBrowserTools } from "./browser";
 export { registerBookmarkTools } from "./bookmarks";
 export { registerExternalAndPromptTools } from "./prompt";
-export { registerTaskBridgeTools } from "./task-bridge";
+export { registerTaskBridgeTools, dispatchBridgeTask, clearTaskQueue } from "./task-bridge";
 export { registerPlanTools } from "./plan-tools";
 export { registerFbReplyTools } from "./fb-reply-tools";
 export { registerFbPostTools } from "./fb-post-tools";

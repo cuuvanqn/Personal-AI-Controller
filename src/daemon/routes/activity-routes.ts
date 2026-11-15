@@ -28,6 +28,7 @@ import {
 } from "../fb-media-post";
 import { listWindows, takeScreenshot, mouseAction, keyboardAction, executeCuaTool, getCuaToolList } from "../desktop";
 import { invokeVpsSsh } from "../vps";
+import { dispatchBridgeTask, clearTaskQueue } from "../tools/task-bridge";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { assertSafePath } from "../security";
@@ -566,6 +567,40 @@ export async function handleActivityRoutes(
       const res = await invokeVpsSsh("exec", body);
       handleMcpActivity({ type: "vps_action", action: "exec", host: body.host, command: body.command });
       return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  // 7b. Antigravity IDE Task Dispatch & Queue Management Endpoints
+  if (url.pathname === "/api/activity/v1/tasks/dispatch" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (!body.goal || typeof body.goal !== "string" || !body.goal.trim()) {
+        return errorResponse("Thiếu tham số bắt buộc 'goal'", 400);
+      }
+      const res = await dispatchBridgeTask({
+        goal: body.goal.trim(),
+        details: body.details,
+        filesHint: body.filesHint,
+        verify: body.verify,
+        chatId: body.chatId || "chatgpt-web",
+        planId: body.planId,
+        planTaskId: body.planTaskId,
+        orderIndex: body.orderIndex,
+        dependsOn: body.dependsOn,
+      }, handleMcpActivity);
+      return jsonResponse({ ok: true, ...res });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/tasks/queue/clear" && req.method === "POST") {
+    try {
+      const body: any = await req.json().catch(() => ({}));
+      const res = clearTaskQueue(body.reason || "api_clear", handleMcpActivity);
+      return jsonResponse({ ok: true, ...res });
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }

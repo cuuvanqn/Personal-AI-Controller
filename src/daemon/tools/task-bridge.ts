@@ -80,10 +80,17 @@ export function getCompletedTasks(): Map<string, CompletedTaskRecord> {
   return new Map(completedTasks);
 }
 
-export function clearTaskQueue(): void {
+export function clearTaskQueue(reason: string = "manual_clear", onActivity?: (event: any) => void): { ok: boolean; clearedCount: number; message: string } {
+  const clearedCount = taskQueue.length + inFlightTasks.size;
   taskQueue.length = 0;
   inFlightTasks.clear();
   completedTasks.clear();
+  try {
+    const db = getDatabase();
+    db.run("UPDATE tasks SET status = 'failed' WHERE status IN ('pending', 'running')");
+  } catch {}
+  onActivity?.({ type: "ide_queue_cleared", clearedCount, reason });
+  return { ok: true, clearedCount, message: `Đã dọn dẹp ${clearedCount} task trong hàng đợi.` };
 }
 
 function toBridgeItem(row: {
@@ -175,22 +182,8 @@ function touchHeartbeat(db: ReturnType<typeof getDatabase>, task: BridgeTaskItem
   } catch {}
 }
 
-/**
- * Đăng ký bộ công cụ Task Bridge (Giano / IDE Worker) vào McpServer
- */
-export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any) => void): void {
-  // 1. Tool giao việc từ ChatGPT Web (Dispatch Task)
-  const dispatchToolHandler = async ({
-    goal,
-    details,
-    filesHint,
-    verify,
-    chatId = "chatgpt-web",
-    planId,
-    planTaskId,
-    orderIndex,
-    dependsOn,
-  }: {
+export async function dispatchBridgeTask(
+  input: {
     goal: string;
     details?: string;
     filesHint?: string[];
@@ -200,110 +193,132 @@ export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any
     planTaskId?: string;
     orderIndex?: number;
     dependsOn?: string[];
-  }) => {
-    // Phase 1: liên kết task lẻ với plan nếu caller cung cấp planId/planTaskId.
-    // Không có planId thì hành vi y như cũ. Việc đổi trạng thái plan task
-    // (pending -> running -> success) thuộc về Phase 2/4, không làm ở đây.
-    let resolvedPlanId = planId;
-    let resolvedPlanTaskId = planTaskId;
-    if (planId || planTaskId || orderIndex !== undefined) {
-      const dbForPlan = getDatabase();
-      if (planTaskId) {
-        const planTask = getPlanTask(dbForPlan, planTaskId);
-        if (!planTask) throw new Error(`Unknown planTaskId: ${planTaskId}`);
-        if (planId && planTask.planId !== planId) {
-          throw new Error(`planTaskId ${planTaskId} does not belong to planId ${planId}.`);
-        }
-        resolvedPlanId = planTask.planId;
+  },
+  onActivity?: (event: any) => void
+): Promise<{
+  status: string;
+  taskId: string;
+  planId: string | null;
+  planTaskId: string | null;
+  message: string;
+  queuePosition: number;
+}> {
+  const {
+    goal,
+    details,
+    filesHint,
+    verify,
+    chatId = "chatgpt-web",
+    planId,
+    planTaskId,
+    orderIndex,
+    dependsOn,
+  } = input;
+
+  let resolvedPlanId = planId;
+  let resolvedPlanTaskId = planTaskId;
+  if (planId || planTaskId || orderIndex !== undefined) {
+    const dbForPlan = getDatabase();
+    if (planTaskId) {
+      const planTask = getPlanTask(dbForPlan, planTaskId);
+      if (!planTask) throw new Error(`Unknown planTaskId: ${planTaskId}`);
+      if (planId && planTask.planId !== planId) {
+        throw new Error(`planTaskId ${planTaskId} does not belong to planId ${planId}.`);
+      }
+      resolvedPlanId = planTask.planId;
+      resolvedPlanTaskId = planTask.id;
+    } else if (planId) {
+      const plan = getPlan(dbForPlan, planId);
+      if (!plan) throw new Error(`Unknown planId: ${planId}`);
+      if (plan.status === "done" || plan.status === "cancelled") {
+        throw new Error(`Cannot dispatch a task for a ${plan.status} plan: ${planId}`);
+      }
+      if (orderIndex !== undefined) {
+        const planTask = getPlanTasks(dbForPlan, planId).find((t) => t.orderIndex === orderIndex);
+        if (!planTask) throw new Error(`No plan task with orderIndex ${orderIndex} in plan ${planId}.`);
         resolvedPlanTaskId = planTask.id;
-      } else if (planId) {
-        const plan = getPlan(dbForPlan, planId);
-        if (!plan) throw new Error(`Unknown planId: ${planId}`);
-        if (plan.status === "done" || plan.status === "cancelled") {
-          throw new Error(`Cannot dispatch a task for a ${plan.status} plan: ${planId}`);
-        }
-        if (orderIndex !== undefined) {
-          const planTask = getPlanTasks(dbForPlan, planId).find((t) => t.orderIndex === orderIndex);
-          if (!planTask) throw new Error(`No plan task with orderIndex ${orderIndex} in plan ${planId}.`);
-          resolvedPlanTaskId = planTask.id;
-        }
       }
     }
+  }
 
-    const taskId = `task_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    const rawText = details ? `${goal}\n\nChi tiết:\n${details}` : goal;
+  const taskId = `task_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+  const rawText = details ? `${goal}\n\nChi tiết:\n${details}` : goal;
 
-    // Phase 6 safety: refuse to queue a task that looks destructive, rather
-    // than discovering it after a worker has already started it.
-    const risk = isRiskyTask({ goal, details, filesHint });
-    if (risk.risky) {
-      throw new Error(`Task bị từ chối vì dấu hiệu nguy hiểm: ${risk.reasons.join("; ")}`);
-    }
+  const risk = isRiskyTask({ goal, details, filesHint });
+  if (risk.risky) {
+    throw new Error(`Task bị từ chối vì dấu hiệu nguy hiểm: ${risk.reasons.join("; ")}`);
+  }
 
-    const item: BridgeTaskItem = {
+  const item: BridgeTaskItem = {
+    taskId,
+    chatId,
+    messageId: `msg_${Date.now()}`,
+    replyToId: "",
+    fromUserId: "chatgpt",
+    receivedAt: new Date().toISOString(),
+    rawText,
+    goal: goal.trim(),
+    details,
+    filesHint,
+    planId: resolvedPlanId,
+    planTaskId: resolvedPlanTaskId,
+    payload: {
+      version: "v2",
       taskId,
-      chatId,
-      messageId: `msg_${Date.now()}`,
-      replyToId: "",
-      fromUserId: "chatgpt",
-      receivedAt: new Date().toISOString(),
-      rawText,
       goal: goal.trim(),
       details,
       filesHint,
       planId: resolvedPlanId,
       planTaskId: resolvedPlanTaskId,
-      payload: {
-        version: "v2",
-        taskId,
-        goal: goal.trim(),
-        details,
-        filesHint,
-        planId: resolvedPlanId,
-        planTaskId: resolvedPlanTaskId,
-      },
-    };
+    },
+  };
 
-    taskQueue.push(item);
+  taskQueue.push(item);
 
-    // Lưu trạng thái vào SQLite
-    try {
-      const db = getDatabase();
-      db.run(
-        "INSERT OR REPLACE INTO tasks (id, conversation_id, title, status, created_at, plan_id, plan_task_id, attempt_count, last_heartbeat_at, details, files_hint_json, verify_json) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)",
-        [taskId, chatId, goal, "pending", Date.now(), resolvedPlanId ?? null, resolvedPlanTaskId ?? null, details ?? null, JSON.stringify(filesHint ?? []), JSON.stringify(verify ?? [])],
-      );
-      db.run(
-        "INSERT INTO timeline_events (conversation_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
-        [chatId, "task_dispatched", JSON.stringify({ taskId, goal, details, filesHint, planId: resolvedPlanId ?? null, planTaskId: resolvedPlanTaskId ?? null, orderIndex: orderIndex ?? null, dependsOn: dependsOn ?? [] }), Date.now()],
-      );
-    } catch {}
+  // Lưu trạng thái vào SQLite
+  try {
+    const db = getDatabase();
+    db.run(
+      "INSERT OR REPLACE INTO tasks (id, conversation_id, title, status, created_at, plan_id, plan_task_id, attempt_count, last_heartbeat_at, details, files_hint_json, verify_json) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)",
+      [taskId, chatId, goal, "pending", Date.now(), resolvedPlanId ?? null, resolvedPlanTaskId ?? null, details ?? null, JSON.stringify(filesHint ?? []), JSON.stringify(verify ?? [])],
+    );
+    db.run(
+      "INSERT INTO timeline_events (conversation_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)",
+      [chatId, "task_dispatched", JSON.stringify({ taskId, goal, details, filesHint, planId: resolvedPlanId ?? null, planTaskId: resolvedPlanTaskId ?? null, orderIndex: orderIndex ?? null, dependsOn: dependsOn ?? [] }), Date.now()],
+    );
+  } catch {}
 
-    onActivity?.({
-      type: "ide_task_dispatched",
-      taskId,
-      goal,
-      queuedCount: taskQueue.length,
-      planId: resolvedPlanId,
-      planTaskId: resolvedPlanTaskId,
-    });
+  onActivity?.({
+    type: "ide_task_dispatched",
+    taskId,
+    goal,
+    queuedCount: taskQueue.length,
+    planId: resolvedPlanId,
+    planTaskId: resolvedPlanTaskId,
+  });
 
+  return {
+    status: "queued",
+    taskId,
+    planId: resolvedPlanId ?? null,
+    planTaskId: resolvedPlanTaskId ?? null,
+    message: `Đã đưa task '${goal}' vào hàng đợi cho Antigravity IDE.`,
+    queuePosition: taskQueue.length
+  };
+}
+
+/**
+ * Đăng ký bộ công cụ Task Bridge (Giano / IDE Worker) vào McpServer
+ */
+export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any) => void): void {
+  // 1. Tool giao việc từ ChatGPT Web (Dispatch Task)
+  const dispatchToolHandler = async (args: any) => {
+    const res = await dispatchBridgeTask(args, onActivity);
     return {
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify(
-            {
-              status: "queued",
-              taskId,
-              planId: resolvedPlanId ?? null,
-              planTaskId: resolvedPlanTaskId ?? null,
-              message: `Đã đưa task '${goal}' vào hàng đợi cho Antigravity IDE.`,
-              queuePosition: taskQueue.length
-            },
-            null,
-            2
-          )
+          text: JSON.stringify(res, null, 2)
         }
       ]
     };
@@ -845,6 +860,27 @@ export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any
 
   mcp.tool("giano_queue_stats", "Get queue size and in-flight count.", {}, queueStatsHandler);
   mcp.tool("ide_queue_stats", "Get queue size and in-flight count (Alias).", {}, queueStatsHandler);
+
+  // 7b. Tool dọn dẹp hàng đợi task (giano_queue_clear)
+  const queueClearHandler = async ({ reason = "manual_clear" }: { reason?: string }) => {
+    const result = clearTaskQueue(reason, onActivity);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }]
+    };
+  };
+
+  mcp.tool(
+    "giano_queue_clear",
+    "Xóa sạch toàn bộ hàng đợi task (pending & in-flight) và đánh dấu hủy trong DB.",
+    { reason: z.string().optional().default("manual_clear").describe("Lý do dọn hàng đợi") },
+    queueClearHandler
+  );
+  mcp.tool(
+    "ide_queue_clear",
+    "Xóa sạch toàn bộ hàng đợi task (pending & in-flight) và đánh dấu hủy trong DB (Alias).",
+    { reason: z.string().optional().default("manual_clear").describe("Lý do dọn hàng đợi") },
+    queueClearHandler
+  );
 
   // 8. Resource truy vấn danh sách task
   mcp.resource("queue", "giano://queue", async (uri) => {
