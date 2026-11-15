@@ -137,6 +137,7 @@ Ví dụ lệnh thực tế:
   otter cua call check_permissions
   otter cua call list_windows
   otter cua call click '{"x": 500, "y": 300}'
+  echo '{"x": 500, "y": 300}' | otter cua call click --stdin
   otter cua call type_text '{"text": "Xin chao Otter"}'
   otter cua call hotkey '{"keys": ["ctrl", "c"]}'
 `);
@@ -162,24 +163,46 @@ Ví dụ lệnh thực tế:
         console.error("\x1b[31m[!] Thiếu tên công cụ CUA:\x1b[0m otter cua call <toolName> [jsonArgs]");
         process.exit(1);
       }
+      // Đọc JSON tham số theo thứ tự: argv → sửa JSON bị PowerShell nuốt
+      // dấu ngoặc kép (vd {x: 960, y: 540}) → stdin (pipe hoặc --stdin).
+      // PowerShell 5.1 nuốt dấu " quanh tên trường khi truyền tham số cho
+      // file exe, nên đường stdin là cách chắc chắn nhất trên Windows.
+      const parseJsonArg = (text: string): any => {
+        const t = text.trim();
+        if (!t) return {};
+        try {
+          return JSON.parse(t);
+        } catch {}
+        try {
+          // Thử unescape nếu shell truyền vào \" hoặc bọc trong dấu nháy kép ngoài
+          let cleaned = t.replace(/\\"/g, '"');
+          if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+            cleaned = cleaned.slice(1, -1);
+          }
+          return JSON.parse(cleaned);
+        } catch {}
+        // Thử sửa JSON bị nuốt dấu ngoặc kép quanh tên trường: {x: 1} -> {"x": 1}
+        const repaired = t.replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)(\s*:)/g, '$1"$2"$3');
+        return JSON.parse(repaired);
+      };
+      const readStdinJson = async (): Promise<any> => {
+        const text = await new Response(Bun.stdin).text();
+        return parseJsonArg(text);
+      };
       let argsObj: any = {};
       const rawArg = process.argv.slice(5).join(" ").trim();
-      if (rawArg) {
-        try {
-          argsObj = JSON.parse(rawArg);
-        } catch {
-          try {
-            // Thử unescape nếu shell truyền vào \" hoặc bọc trong dấu nháy kép ngoài
-            let cleaned = rawArg.replace(/\\"/g, '"');
-            if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-              cleaned = cleaned.slice(1, -1);
-            }
-            argsObj = JSON.parse(cleaned);
-          } catch (e: any) {
-            console.error(`\x1b[31m[!] Tham số JSON không hợp lệ:\x1b[0m ${e.message}`);
-            process.exit(1);
-          }
+      try {
+        if (rawArg === "-" || rawArg === "--stdin") {
+          argsObj = await readStdinJson();
+        } else if (rawArg.startsWith("--stdin ")) {
+          argsObj = parseJsonArg(rawArg.slice("--stdin ".length));
+        } else if (rawArg) {
+          argsObj = parseJsonArg(rawArg);
         }
+      } catch (e: any) {
+        console.error(`\x1b[31m[!] Tham số JSON không hợp lệ:\x1b[0m ${e.message}`);
+        console.error(`    Gợi ý: echo '{"x": 960, "y": 540}' | otter cua call ${toolName} --stdin`);
+        process.exit(1);
       }
       const res = await executeCuaTool(toolName, argsObj);
       console.log(typeof res === "object" ? JSON.stringify(res, null, 2) : res);
