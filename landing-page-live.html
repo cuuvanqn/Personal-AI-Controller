@@ -1555,7 +1555,7 @@
           🌟 Giới Thiệu
         </button>
         <button class="tab-btn" id="tab-btn-pricing" onclick="switchView('pricing')">
-          💎 Bảng Giá
+          🎁 Miễn Phí (MIT)
         </button>
         <button class="tab-btn" id="tab-btn-docs" onclick="switchView('docs')">
           📖 Hướng Dẫn
@@ -1569,10 +1569,9 @@
         </a>
 
         <div id="auth-container">
-          <button class="btn-google btn-sm" id="btn-google-login" onclick="handleGoogleSignIn()">
-            <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-            <span>Dùng Thử 30 Ngày</span>
-          </button>
+          <a href="https://github.com/ptn1411/Otter" target="_blank" rel="noreferrer" class="btn-primary btn-sm" style="text-decoration:none; background:#24292e; border:1px solid #444c56;">
+            <span>⭐</span> <span>GitHub</span>
+          </a>
         </div>
 
         <button class="btn-push btn-icon desktop-only" id="btn-web-push" onclick="requestWebNotificationPermission()" title="Bật thông báo Web khi có key hoặc cập nhật">
@@ -1598,13 +1597,13 @@
     <!-- Hero Section -->
     <section class="hero container">
       <div class="eyebrow">
-        <span>✨ Trợ Lý AI Agentic Cho ChatGPT Web</span>
+        <span>✨ Trợ Lý AI Agentic — 100% Miễn Phí & Mã Nguồn Mở (MIT License)</span>
       </div>
       <h1 class="hero-title">
         Otter — Thay bạn làm mọi việc <br><span class="highlight">nhàm chán trên máy tính</span>
       </h1>
       <p class="hero-desc">
-        Chỉ cần nói một câu trên ChatGPT, Otter sẽ tự động đọc web, chạy terminal, quản lý máy chủ từ xa và <strong>tự dựng video AI có thuyết minh tiếng Việt chuẩn truyền hình</strong>. Tiết kiệm 3–5 tiếng mỗi ngày!
+        Chỉ cần nói một câu trên ChatGPT, Otter sẽ tự động đọc web, chạy terminal, quản lý máy chủ từ xa và <strong>tự dựng video AI có thuyết minh tiếng Việt chuẩn truyền hình</strong>. Tiết kiệm 3–5 tiếng mỗi ngày — Hoàn toàn miễn phí!
       </p>
 
       <!-- Primary Action Buttons (Sleek, refined) -->
@@ -1613,10 +1612,9 @@
           <span>📦</span> <span>Tải Tiện Ích Chrome (.zip)</span>
         </a>
 
-        <button onclick="handleGoogleSignIn()" class="btn-google">
-          <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-          <span>🎁 Nhận 30 Ngày Dùng Thử</span>
-        </button>
+        <a href="https://github.com/ptn1411/Otter" target="_blank" rel="noreferrer" class="btn-primary" style="text-decoration:none; background:#24292e; border:1px solid #444c56; display:inline-flex; align-items:center; gap:8px;">
+          <span>⭐</span> <span>Mã Nguồn GitHub</span>
+        </a>
 
         <button onclick="switchView('docs')" class="btn-secondary">
           <span>📖</span> <span>Hướng Dẫn Cài Đặt</span>
@@ -1820,86 +1818,67 @@
     </section>
 
     <!-- ========================================== -->
-    <!-- PRICING & LICENSE PLANS SECTION            -->
+    <!-- OPEN SOURCE & FREE SECTION                 -->
     <!-- ========================================== -->
     <section class="container" id="pricing" style="padding: 40px 0 70px;">
       <div class="section-title-area">
-        <div class="section-tag">Bảng Giá & Bản Quyền</div>
-        <h2 class="section-heading">Lựa chọn gói bản quyền phù hợp với bạn</h2>
-        <p class="section-sub">Đăng nhập tài khoản Google để nhận ngay 30 ngày dùng thử miễn phí (mỗi email 1 lần duy nhất). Chỉ có 2 gói trả phí linh hoạt: 1 năm hoặc sở hữu vĩnh viễn.</p>
+        <div class="section-tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">MÃ NGUỒN MỞ & MIỄN PHÍ</div>
+        <h2 class="section-heading">100% Miễn Phí — Tự Do Cho Mọi Người</h2>
+        <p class="section-sub">Otter được phát hành mã nguồn mở hoàn toàn theo giấy phép MIT. Không cần mua bản quyền, không giới hạn tính năng hay thời gian sử dụng. Bạn có thể tải về, tự do sử dụng và tùy biến trọn đời!</p>
       </div>
 
-      <div class="pricing-grid">
-        <!-- Plan 0: Dùng Thử 30 Ngày -->
-        <div class="pricing-card">
-          <div class="pricing-badge" style="background:#38bdf8; color:#031c30;">1 LẦN / EMAIL</div>
-          <h3 style="font-size:20px; color:#fff; margin-bottom:4px;">🎁 Dùng Thử 30 Ngày</h3>
-          <p style="font-size:13px; color:#94a3b8;">Đăng nhập Google để nhận mã bản quyền tự động gửi về hòm thư.</p>
-          <div class="price-amount">0đ <span>/ 30 ngày</span></div>
+      <div class="pricing-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+        <!-- Card 1: Bản Cộng Đồng (Community / Free) -->
+        <div class="pricing-card featured" style="border-color: rgba(56, 189, 248, 0.4);">
+          <div class="pricing-badge" style="background:#38bdf8; color:#031c30;">MIỄN PHÍ TRỌN ĐỜI</div>
+          <h3 style="font-size:22px; color:#fff; margin-bottom:4px;">🚀 Bản Đầy Đủ (Full Features)</h3>
+          <p style="font-size:13px; color:#94a3b8;">Cài đặt 1 dòng lệnh, không cần nhập License Key, kích hoạt sẵn toàn bộ tính năng.</p>
+          <div class="price-amount" style="color: #38bdf8;">0đ <span style="color:#94a3b8;">/ Vĩnh viễn</span></div>
           <ul class="price-features">
-            <li>Trải nghiệm toàn bộ 100% tính năng Otter</li>
-            <li>Đọc & tóm tắt web với <code>/browse</code></li>
-            <li>Dựng video AI Remotion kèm thuyết minh</li>
-            <li>Quản lý máy chủ VPS & lưu bookmark</li>
-            <li>Mỗi tài khoản Google chỉ được nhận 1 lần</li>
+            <li>✅ <strong>Toàn bộ 190+ MCP Tools</strong> điều khiển máy tính, CUA, PTY Terminal</li>
+            <li>✅ <strong>Tự động hóa trình duyệt</strong>: Quét trang, click, nhập liệu, lướt tin</li>
+            <li>✅ <strong>Tạo video Remotion AI</strong> kèm giọng đọc tiếng Việt studio chuẩn phát thanh</li>
+            <li>✅ <strong>Giao thức A2A Protocol 1.0</strong> & Social Task Mesh kết nối mạng xã hội</li>
+            <li>✅ <strong>Tự do thương mại & cá nhân</strong> theo giấy phép mã nguồn mở MIT</li>
           </ul>
-          <button class="btn-google" style="width:100%; justify-content:center; margin-top:auto;" onclick="handleGoogleSignIn()">
-            <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-            Nhận 30 Ngày Dùng Thử
-          </button>
+          <a href="#cai-dat" onclick="switchView('docs')" class="btn-primary" style="width:100%; justify-content:center; margin-top:auto; text-decoration:none;">
+            ⚡ Cài Đặt Miễn Phí (30 Giây)
+          </a>
         </div>
 
-        <!-- Plan 1: Gói 1 Năm -->
-        <div class="pricing-card">
-          <div class="pricing-badge" style="background:#10b981;">TIẾT KIỆM</div>
-          <h3 style="font-size:20px; color:#fff; margin-bottom:4px;">⚡ Gói 1 Năm</h3>
-          <p style="font-size:13px; color:#94a3b8;">Dành cho cá nhân sử dụng công việc hàng ngày trong 365 ngày.</p>
-          <div class="price-amount">500.000đ <span>/ năm</span></div>
+        <!-- Card 2: GitHub Open Source -->
+        <div class="pricing-card" style="border-color: rgba(168, 85, 247, 0.4);">
+          <div class="pricing-badge" style="background:#a855f7; color:#fff;">MIT LICENSE</div>
+          <h3 style="font-size:22px; color:#fff; margin-bottom:4px;">🐙 Mã Nguồn GitHub</h3>
+          <p style="font-size:13px; color:#94a3b8;">Mã nguồn công khai minh bạch, dễ dàng kiểm tra, fork và đóng góp phát triển.</p>
+          <div class="price-amount" style="color: #c084fc;">Open Source <span style="color:#94a3b8;">/ GitHub</span></div>
           <ul class="price-features">
-            <li>Sử dụng toàn bộ tính năng trong 365 ngày</li>
-            <li>Miễn phí mọi bản cập nhật tính năng mới trong năm</li>
-            <li>Kích hoạt trên máy tính của bạn (hỗ trợ đổi máy)</li>
-            <li>Hỗ trợ giải đáp qua nhóm cộng đồng Facebook</li>
-            <li>Chi phí siêu rẻ chỉ ~1.300đ/ngày</li>
+            <li>✅ <strong>Kho mã nguồn chính thức</strong>: <code>github.com/ptn1411/Otter</code></li>
+            <li>✅ <strong>Bảo mật tuyệt đối</strong>: Chạy local 100%, không gửi dữ liệu ra bên ngoài</li>
+            <li>✅ <strong>Dễ dàng tùy biến</strong>: Thêm tool MCP mới, sửa UI Extension theo ý thích</li>
+            <li>✅ <strong>Đóng góp Pull Request</strong> và nhận hỗ trợ từ cộng đồng</li>
+            <li>✅ <strong>Hỗ trợ đa nền tảng</strong>: Windows x64, macOS (Apple Silicon / Intel), Linux</li>
           </ul>
-          <button class="btn-primary" style="width:100%; justify-content:center; margin-top:auto;" onclick="openPaymentModal('1nam', 500000, 'Gói 1 Năm (500.000đ)')">
-            ⚡ Mua Gói 1 Năm (500k)
-          </button>
+          <a href="https://github.com/ptn1411/Otter" target="_blank" rel="noreferrer" class="btn-secondary" style="width:100%; justify-content:center; margin-top:auto; text-decoration:none; background: #1e1b4b; border-color: #6366f1; color: #fff;">
+            ⭐ Ghé Thăm GitHub Repo
+          </a>
         </div>
 
-        <!-- Plan 2: Gói Vĩnh Viễn -->
-        <div class="pricing-card featured">
-          <div class="pricing-badge">PHỔ BIẾN NHẤT</div>
-          <h3 style="font-size:20px; color:#fff; margin-bottom:4px;">👑 Gói Vĩnh Viễn</h3>
-          <p style="font-size:13px; color:#94a3b8;">Trả một lần duy nhất, sở hữu phần mềm trọn đời không phát sinh phí.</p>
-          <div class="price-amount">1.000.000đ <span>/ trọn đời</span></div>
+        <!-- Card 3: Tài Trợ / Ủng Hộ (Donation) -->
+        <div class="pricing-card" style="border-color: rgba(234, 179, 8, 0.4);">
+          <div class="pricing-badge" style="background:#eab308; color:#1f1300;">TÙY TÂM ỦNG HỘ</div>
+          <h3 style="font-size:22px; color:#fff; margin-bottom:4px;">☕ Tài Trợ & Đồng Hành</h3>
+          <p style="font-size:13px; color:#94a3b8;">Mọi sự đóng góp tự nguyện đều giúp tác giả duy trì máy chủ, tài liệu và tính năng mới.</p>
+          <div class="price-amount" style="color: #facc15;">Tự Nguyện <span style="color:#94a3b8;">/ Tùy tâm</span></div>
           <ul class="price-features">
-            <li>Bản quyền vĩnh viễn trọn đời (Lifetime)</li>
-            <li>Không lo gia hạn hay phí duy trì hàng năm</li>
-            <li>Miễn phí trọn đời tất cả các bản nâng cấp tương lai</li>
-            <li>Bảo lưu bản quyền khi cài lại Windows hoặc đổi máy</li>
-            <li>Hỗ trợ kỹ thuật qua nhóm Facebook</li>
+            <li>💖 <strong>Ủng hộ duy trì</strong> server tên miền, tunnel và tài nguyên phát triển</li>
+            <li>💬 <strong>Tham gia nhóm VIP Facebook</strong> giao lưu cùng tác giả & cộng đồng</li>
+            <li>☕ <strong>Mời tác giả 1 ly cà phê</strong> nếu Otter giúp bạn tiết kiệm hàng giờ mỗi ngày</li>
+            <li>🏦 <strong>Ngân hàng TPBank</strong>: <code>69238686888</code> (PHAM THANH NAM)</li>
+            <li>📱 <strong>Quét mã QR SePay</strong> chuyển khoản nhanh chóng tiện lợi</li>
           </ul>
-          <button class="btn-primary" style="width:100%; justify-content:center; margin-top:auto; background: linear-gradient(135deg, #34d399 0%, #10b981 100%);" onclick="openPaymentModal('vinhvien', 1000000, 'Gói Vĩnh Viễn (1.000.000đ)')">
-            👑 Mua Gói Vĩnh Viễn (1Tr)
-          </button>
-        </div>
-
-        <!-- Plan 3: Gói Vĩnh Viễn VIP -->
-        <div class="pricing-card vip">
-          <div class="pricing-badge vip-badge">ƯU TIÊN HỖ TRỢ</div>
-          <h3 style="font-size:20px; color:#fff; margin-bottom:4px;">⭐ Vĩnh Viễn VIP</h3>
-          <p style="font-size:13px; color:#94a3b8;">Sở hữu trọn đời kèm dịch vụ hỗ trợ kỹ thuật chuyên sâu 1-1.</p>
-          <div class="price-amount">1.500.000đ <span>/ trọn đời</span></div>
-          <ul class="price-features">
-            <li>Toàn bộ quyền lợi của <strong>Gói Vĩnh Viễn Trọn Đời</strong></li>
-            <li class="vip-feat"><strong>Ưu tiên hỗ trợ kỹ thuật 1-1</strong> qua Zalo / UltraView / AnyDesk</li>
-            <li class="vip-feat">Hỗ trợ cài đặt, kết nối VPS và cấu hình Extension tận nơi</li>
-            <li class="vip-feat">Tư vấn và hỗ trợ tùy biến kịch bản video AI / tự động hóa riêng</li>
-            <li class="vip-feat">Kênh trao đổi trực tiếp với tác giả phát triển dự án</li>
-          </ul>
-          <button class="btn-primary" style="width:100%; justify-content:center; margin-top:auto; background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%); color:#fff;" onclick="openPaymentModal('vip', 1500000, 'Gói Vĩnh Viễn VIP (1.500.000đ - Ưu Tiên Hỗ Trợ)')">
-            ⭐ Mua Gói VIP (1Tr5)
+          <button class="btn-primary" style="width:100%; justify-content:center; margin-top:auto; background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%); color:#000; font-weight:700;" onclick="openPaymentModal('donate', 0, 'Tài Trợ & Ủng Hộ Dự Án Otter')">
+            💖 Mở Mã QR Ủng Hộ Tác Giả
           </button>
         </div>
       </div>
@@ -2069,17 +2048,17 @@
 
         <!-- Step 5: Pricing in Docs -->
         <div class="doc-block" id="bang-gia-docs">
-          <h3><span>💎</span> Bước 5: Bảng Giá & Kích Hoạt Bản Quyền</h3>
-          <p>Otter áp dụng chính sách cấp phép rõ ràng, minh bạch và thân thiện:</p>
+          <h3><span>🎁</span> Bước 5: Giấy Phép Sử Dụng & Mã Nguồn Mở</h3>
+          <p>Otter là phần mềm mã nguồn mở hoàn toàn theo giấy phép <strong>MIT License</strong>:</p>
           <ul style="color:var(--text-muted); padding-left:20px; line-height:1.8; margin-bottom:18px;">
-            <li><strong>Gói Dùng Thử (0đ)</strong>: Tặng 30 ngày dùng thử đầy đủ tính năng khi đăng nhập Google (mỗi tài khoản 1 lần duy nhất).</li>
-            <li><strong>Gói 1 Năm (500.000đ)</strong>: Thích hợp cho cá nhân làm việc liên tục 365 ngày.</li>
-            <li><strong>Gói Vĩnh Viễn (1.000.000đ)</strong>: Sở hữu trọn đời, miễn phí mọi bản nâng cấp tương lai.</li>
-            <li><strong>Gói Vĩnh Viễn VIP (1.500.000đ)</strong>: Sở hữu trọn đời + <strong>Ưu tiên hỗ trợ kỹ thuật 1-1</strong> qua Zalo / UltraView cài đặt và cấu hình riêng.</li>
+            <li><strong>100% Miễn Phí (0đ)</strong>: Tự do tải về, cài đặt và sử dụng không giới hạn tính năng.</li>
+            <li><strong>Không Cần License Key</strong>: Bản cài đặt mặc định mở khóa vĩnh viễn (Community Edition).</li>
+            <li><strong>Mã Nguồn Mở (Open Source)</strong>: Toàn bộ mã nguồn được công khai trên GitHub để cộng đồng cùng kiểm tra và đóng góp.</li>
+            <li><strong>Tùy Tâm Ủng Hộ (Donation)</strong>: Bạn có thể ủng hộ tác giả một ly cà phê nếu thấy Otter giúp ích cho công việc!</li>
           </ul>
-          <button class="btn-primary" onclick="switchView('landing'); setTimeout(() => document.getElementById('pricing').scrollIntoView({behavior:'smooth'}), 100);">
-            👉 Xem Chi Tiết Bảng Giá & Đăng Nhập Nhận Key
-          </button>
+          <a href="https://github.com/ptn1411/Otter" target="_blank" rel="noreferrer" class="btn-primary" style="display:inline-flex; align-items:center; gap:8px; text-decoration:none;">
+            ⭐ Ghé Thăm GitHub Repo (@ptn1411/Otter)
+          </a>
         </div>
 
         <!-- Step 6: FAQ -->
@@ -2088,21 +2067,21 @@
           
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">
-              <span>Otter có gói dùng thử miễn phí không?</span>
+              <span>Otter có miễn phí thật không?</span>
               <span class="faq-toggle">▼</span>
             </div>
             <div class="faq-answer">
-              <strong>CÓ!</strong> Bạn chỉ cần bấm nút <strong>Đăng nhập Google</strong> trên website này, hệ thống sẽ tự động cấp ngay <strong>30 ngày dùng thử miễn phí</strong> và gửi mã kích hoạt về hòm thư của bạn. Mỗi email Google chỉ được nhận 1 lần duy nhất.
+              <strong>100% MIỄN PHÍ!</strong> Otter được phát hành mã nguồn mở theo giấy phép MIT. Toàn bộ tính năng, 190+ công cụ MCP, tự động hóa trình duyệt, CUA desktop và dựng video AI đều mở sẵn cho mọi người sử dụng, không cần mua bản quyền hay trả bất kỳ khoản phí nào.
             </div>
           </div>
 
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">
-              <span>Sau khi hết hạn dùng thử, giá nâng cấp thế nào?</span>
+              <span>Có cần tạo tài khoản hoặc nhập mã bản quyền không?</span>
               <span class="faq-toggle">▼</span>
             </div>
             <div class="faq-answer">
-              Otter chỉ có đúng 2 gói trả phí: <strong>Gói 1 Năm (500.000đ)</strong> và <strong>Gói Vĩnh Viễn (1.000.000đ)</strong>. Nếu bạn muốn được kèm cặp và hỗ trợ kỹ thuật 1-1 tận nơi, có thêm <strong>Gói Vĩnh Viễn VIP (1.500.000đ)</strong>.
+              <strong>KHÔNG CẦN!</strong> Sau khi cài đặt xong theo hướng dẫn ở Bước 1, Otter sẽ tự động nhận diện chế độ Community với đầy đủ quyền hạn. Bạn chỉ cần kết nối với ChatGPT Web là dùng được ngay.
             </div>
           </div>
 
@@ -2179,6 +2158,8 @@
       <p style="margin-bottom: 8px;"><strong>Otter AI Desktop Assistant</strong> — Tự động hóa công việc máy tính bằng ngôn ngữ tự nhiên.</p>
       <p style="margin-bottom: 8px;">
         Tác giả: <a href="https://facebook.com/ptn1411" target="_blank" rel="noreferrer" style="font-weight:700;">Phạm Thanh Nam (@ptn1411)</a> • 
+        Giấy phép: <strong>MIT License (Mã nguồn mở)</strong> • 
+        GitHub: <a href="https://github.com/ptn1411/Otter" target="_blank" rel="noreferrer">github.com/ptn1411/Otter</a> • 
         Cộng đồng: <a href="https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr" target="_blank" rel="noreferrer">Nhóm Facebook Hỗ Trợ</a> • 
         Tải tiện ích: <a href="https://otter.gpt.io.vn/otter-extension.zip" download>otter-extension.zip</a>
       </p>
@@ -2223,42 +2204,31 @@
     </div>
   </div>
 
-  <!-- Modal 2: Thanh Toán & QR Chuyển Khoản Mua Gói -->
+  <!-- Modal 2: Ủng Hộ & Tài Trợ Dự Án (Donation) -->
   <div class="modal-overlay" id="modal-payment">
     <div class="modal-box">
       <button class="modal-close" onclick="closeModal('modal-payment')">✕</button>
-      <div style="font-size: 40px; margin-bottom: 8px;">💳</div>
-      <h3 style="color: #fff; font-size: 20px; margin-bottom: 6px;" id="pay-package-title">Thanh Toán Gói Bản Quyền</h3>
+      <div style="font-size: 40px; margin-bottom: 8px;">💖</div>
+      <h3 style="color: #fff; font-size: 20px; margin-bottom: 6px;" id="pay-package-title">Tài Trợ & Ủng Hộ Dự Án Otter</h3>
       <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
-        Quét mã VietQR TPBank để kích hoạt tự động hoặc gửi biên lai vào nhóm hỗ trợ.
+        Otter là dự án mã nguồn mở (MIT License) hoàn toàn miễn phí. Mọi sự đóng góp tự nguyện đều giúp tác giả duy trì máy chủ, tài liệu và các tính năng mới.
       </p>
-
-      <div style="text-align: left; margin-bottom: 14px;">
-        <label style="font-size: 12px; color: #94a3b8; font-weight: 600;">Email nhận mã bản quyền của bạn:</label>
-        <input type="email" id="pay-email-input" class="modal-input" placeholder="nhap-email-cua-ban@gmail.com" oninput="updatePaymentQR()">
-      </div>
 
       <!-- VietQR Image Box -->
       <div style="background:#fff; padding:12px; border-radius:14px; display:inline-block; margin-bottom:16px;">
-        <img id="pay-qr-img" src="" alt="VietQR TPBank" style="max-width:220px; width:100%; display:block; border-radius:8px;">
+        <img id="pay-qr-img" src="https://raw.githubusercontent.com/ptn1411/skill/main/qr-sepay.png" alt="QR SePay TPBank" style="max-width:240px; width:100%; display:block; border-radius:8px;">
       </div>
 
       <div class="bank-info" style="width:100%; box-sizing:border-box; margin-bottom:16px; font-size:13px;">
         <div>• Ngân hàng: <strong>TPBank (Tiên Phong Bank)</strong></div>
         <div>• Số tài khoản: <strong>69238686888</strong> <button class="btn-push" style="padding:2px 8px; font-size:11px;" onclick="copyText('69238686888', this)">Sao chép STK</button></div>
         <div>• Chủ tài khoản: <strong>PHAM THANH NAM</strong></div>
-        <div>• Số tiền: <strong id="pay-amount-label" style="color:#10b981;">500.000 VNĐ</strong></div>
-        <div>• Nội dung CK: <strong id="pay-memo-label" style="color:#38bdf8;">OTTER 1NAM</strong> <button class="btn-push" style="padding:2px 8px; font-size:11px;" onclick="copyText(document.getElementById('pay-memo-label').textContent, this)">Sao chép cú pháp</button></div>
-      </div>
-
-      <div style="margin-bottom: 14px;">
-        <button type="button" class="btn-primary" style="width:100%; justify-content:center; padding:13px; font-size:14px; font-weight:700;" id="btn-submit-order" onclick="handleSubmitPaymentOrder()">
-          📤 Xác Nhận Đã Chuyển Khoản & Gửi Đơn
-        </button>
+        <div>• Số tiền: <strong id="pay-amount-label" style="color:#10b981;">Tùy tâm ủng hộ</strong></div>
+        <div>• Nội dung CK: <strong id="pay-memo-label" style="color:#38bdf8;">UNG HO OTTER</strong> <button class="btn-push" style="padding:2px 8px; font-size:11px;" onclick="copyText('UNG HO OTTER', this)">Sao chép cú pháp</button></div>
       </div>
 
       <p style="font-size:12px; color:#94a3b8;">
-        Sau khi chuyển khoản, nhấn nút gửi đơn ở trên để Quản trị viên duyệt và gửi mã bản quyền vào email của bạn! Hoặc liên hệ <a href="https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr" target="_blank" rel="noreferrer" style="color:#38bdf8;">Nhóm Hỗ Trợ</a> để được hỗ trợ trực tiếp.
+        Chân thành cảm ơn sự đồng hành và ủng hộ của bạn! Mọi thắc mắc hãy tham gia <a href="https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr" target="_blank" rel="noreferrer" style="color:#38bdf8;">Nhóm Hỗ Trợ</a> để giao lưu cùng cộng đồng.
       </p>
     </div>
   </div>
