@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { getTailscaleIp } from "./security";
+import { getTailscaleIp, ensureAuthToken } from "./security";
 import { initDatabase } from "./db";
 import { createMcpServer } from "./mcp";
 import { recoverTaskQueue, sweepStaleBridgeTasks } from "./tools/task-bridge";
@@ -52,13 +52,13 @@ import {
 const cliArg = process.argv[2];
 
 if (cliArg === "version" || cliArg === "--version" || cliArg === "-v") {
-  console.log("Otter Agent v2.0.0");
+  console.log("Otter Agent v2.1.0");
   process.exit(0);
 }
 
 if (cliArg === "help" || cliArg === "--help" || cliArg === "-h") {
   console.log(`
-🦦 Otter Agent — Agentic AI Desktop & Browser Controller (v2.0.0)
+🦦 Otter Agent — Agentic AI Desktop & Browser Controller (v2.1.0)
 
 Cách sử dụng:
   otter                         Khởi động Otter Daemon ngầm (tự động kết nối TryCloudflare)
@@ -443,24 +443,21 @@ const server = Bun.serve<WsClientData>({
     const preflight = handleCorsPreflight(req);
     if (preflight) return preflight;
 
-    // 2. Kiểm tra xác thực (nếu cấu hình OTTER_API_KEY)
+    // 2. Kiểm tra xác thực (Local/LAN/Tailscale miễn trừ khi chưa đặt OTTER_API_KEY;
+    //    truy cập từ Internet qua Cloudflare Tunnel BẮT BUỘC phải có Bearer token!)
     const isPublicPath = url.pathname === "/" ||
+      url.pathname === "/health" ||
+      url.pathname === "/api/health" ||
       url.pathname === "/activity" ||
       url.pathname === "/dashboard" ||
-      url.pathname.startsWith("/api/tasks") ||
-      url.pathname.startsWith("/api/activity/v1/tasks/") ||
       url.pathname.startsWith("/storage/tasks/") ||
       url.pathname === "/api/media/file" ||
       url.pathname.startsWith("/storage/media/") ||
-      url.pathname.startsWith("/api/activity/v1/fb/") ||
-      url.pathname.startsWith("/api/activity/v1/gpm/") ||
-      url.pathname.startsWith("/api/activity/v1/social/") ||
       url.pathname === "/openapi.json" ||
-      url.pathname.startsWith("/api/system/security/full-access") ||
       matchDaemonRoute(url.pathname, "MCP_SERVERS") ||
       matchDaemonRoute(url.pathname, "SYS_LICENSE") ||
       matchDaemonRoute(url.pathname, "SYS_LICENSE_ACTIVATE") ||
-      matchDaemonRoutePrefix(url.pathname, "SYS_TUNNEL") ||
+      matchDaemonRoute(url.pathname, "SYS_TUNNEL") ||
       url.pathname.startsWith("/assets/") ||
       url.pathname === "/.well-known/ai-plugin.json" ||
       url.pathname === "/.well-known/agent-card.json" ||
@@ -876,6 +873,8 @@ const tunnelExplicitlyOn = process.argv.includes("--tunnel") || process.env.ENAB
 const tunnelDisabled = process.argv.includes("--no-tunnel") || process.env.NO_TUNNEL === "true";
 const shouldStartTunnel = tunnelExplicitlyOn || !tunnelDisabled;
 if (shouldStartTunnel) {
+  // Đảm bảo ~/.otter/auth.token luôn tồn tại để bảo vệ các API nhạy cảm khi mở Tunnel công khai
+  ensureAuthToken();
   console.log(`[*] Đang tự động kết nối Cloudflare Quick Tunnel (TryCloudflare)...`);
   startQuickTunnel(PORT, (url) => {
     broadcast({ type: "tunnel_ready", url });

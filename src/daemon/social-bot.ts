@@ -14,6 +14,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { io, Socket } from "socket.io-client";
 import { dispatchBridgeTask, taskBridgeEvents } from "./tools/task-bridge";
+import { acknowledgeTask } from "./a2a-client";
 
 export interface SocialBotConfig {
   /** MXH Backend Base URL (e.g. http://192.168.1.3:4001 or http://100.111.68.103:4001) */
@@ -358,7 +359,10 @@ export async function sendSocialMessage(
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${currentConfig.botToken}`,
+      },
       body: JSON.stringify({
         chat_id: Number(chatId),
         text,
@@ -408,6 +412,25 @@ async function handleIncomingMessage(payload: any) {
   // 2. Chống echo: bỏ qua tin nhắn từ chính bot mình
   if (senderUsername === currentConfig.botUsername) {
     return;
+  }
+
+  // 2b. Tự động ACK task A2A nếu tin nhắn này gắn với một thẻ ProjectTask trên MXH
+  if (payload.id) {
+    void (async () => {
+      try {
+        const tasks = await fetchSocialTasks(Number(convId));
+        const matched = tasks.find((t: any) => Number(t.mxhMessageId) === Number(payload.id) && !t.ackedAt);
+        if (matched?.id) {
+          await acknowledgeTask(
+            currentConfig.serverUrl,
+            `task-${matched.id}`,
+            currentConfig.botToken,
+            currentConfig.botUsername
+          );
+          console.log(`[SocialBot] ✅ Auto-acknowledged A2A task-${matched.id} (msg #${payload.id})`);
+        }
+      } catch {}
+    })();
   }
 
   const mentionsBot = /@(otter|antigravity|ai_antigravity)\b/i.test(rawText);

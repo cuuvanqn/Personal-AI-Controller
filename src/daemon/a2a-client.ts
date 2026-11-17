@@ -359,6 +359,21 @@ export async function cancelTask(baseUrl: string, id: string, authToken?: string
   return (await rpcCall(baseUrl, "CancelTask", { id }, authToken)) as A2aTask;
 }
 
+/** AcknowledgeTask (tasks/ack) — confirm receipt of a dispatched A2A task. */
+export async function acknowledgeTask(
+  baseUrl: string,
+  id: string,
+  authToken?: string,
+  ackedBy?: string,
+): Promise<A2aTask> {
+  return (await rpcCall(
+    baseUrl,
+    "AcknowledgeTask",
+    { id, ...(ackedBy ? { ackedBy } : {}) },
+    authToken,
+  )) as A2aTask;
+}
+
 /**
  * SendStreamingMessage — POST the message, then read the SSE stream.
  * Each `data:` line is a JSON-RPC envelope whose `result` is a

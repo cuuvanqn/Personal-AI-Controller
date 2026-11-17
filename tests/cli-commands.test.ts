@@ -14,10 +14,10 @@ describe("Otter CLI Subcommands", () => {
     expect(res.stdout).toContain("otter license status");
   });
 
-  it("otter version returns v2.0.0 with exit code 0", () => {
+  it("otter version returns v2.1.0 with exit code 0", () => {
     const res = spawnSync("bun", [entryPath, "version"], { encoding: "utf8" });
     expect(res.status).toBe(0);
-    expect(res.stdout).toContain("v2.0.0");
+    expect(res.stdout).toContain("v2.1.0");
   });
 
   it("otter license status returns device support code and license info", () => {

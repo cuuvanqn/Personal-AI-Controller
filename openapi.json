@@ -68,7 +68,7 @@
     "/api/activity/v1/files/read": {
       "post": {
         "operationId": "readFile",
-        "summary": "Đọc nội dung của một tệp tin trên máy tính",
+        "summary": "Đọc nội dung của một tệp tin trên máy tính (UTF-8 hoặc Base64 nhị phân)",
         "requestBody": {
           "required": true,
           "content": {
@@ -79,6 +79,12 @@
                   "filePath": {
                     "type": "string",
                     "description": "Đường dẫn tuyệt đối hoặc tương đối của tệp"
+                  },
+                  "encoding": {
+                    "type": "string",
+                    "enum": ["utf8", "base64", "auto"],
+                    "default": "auto",
+                    "description": "Mã hóa đọc tệp: 'auto' tự động phát hiện file ảnh/nhị phân và trả về Base64 không làm hỏng dữ liệu"
                   }
                 },
                 "required": [
@@ -98,6 +104,12 @@
                   "properties": {
                     "content": {
                       "type": "string"
+                    },
+                    "encoding": {
+                      "type": "string"
+                    },
+                    "byteLength": {
+                      "type": "integer"
                     }
                   }
                 }
@@ -110,7 +122,7 @@
     "/api/activity/v1/files/write": {
       "post": {
         "operationId": "writeFile",
-        "summary": "Ghi hoặc sửa nội dung của một tệp tin",
+        "summary": "Ghi hoặc sửa nội dung của một tệp tin (hỗ trợ cả UTF-8 và Base64)",
         "requestBody": {
           "required": true,
           "content": {
@@ -124,7 +136,13 @@
                   },
                   "content": {
                     "type": "string",
-                    "description": "Nội dung văn bản cần ghi vào tệp"
+                    "description": "Nội dung văn bản hoặc chuỗi Base64 cần ghi vào tệp"
+                  },
+                  "encoding": {
+                    "type": "string",
+                    "enum": ["utf8", "base64"],
+                    "default": "utf8",
+                    "description": "Mã hóa nội dung ghi ('utf8' hoặc 'base64')"
                   }
                 },
                 "required": [
@@ -1971,6 +1989,138 @@
         "responses": {
           "200": {
             "description": "Đã kích hoạt kết nối Social Bot"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getDaemonHealth",
+        "summary": "Kiểm tra sức khỏe hoạt động của Otter Daemon",
+        "description": "Trả về trạng thái hoạt động, phiên bản, thời gian chạy, kết nối MCP ngoài, Social Bot và Cloudflare Tunnel",
+        "responses": {
+          "200": {
+            "description": "Daemon hoạt động bình thường"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/agy/status": {
+      "get": {
+        "operationId": "getAntigravityCdpStatus",
+        "summary": "Kiểm tra kết nối CDP tới ứng dụng Antigravity IDE",
+        "description": "Tự động dò cổng CDP (DevToolsActivePort / 9222) và trả về trạng thái đăng nhập, project, model, running",
+        "parameters": [
+          {
+            "name": "cdpPort",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "autoLaunch",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": false }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trạng thái kết nối CDP Antigravity"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/agy/run": {
+      "post": {
+        "operationId": "runAntigravityCdpTask",
+        "summary": "Giao nhiệm vụ cho Antigravity IDE qua CDP",
+        "description": "Gửi prompt vào Antigravity IDE, chọn project/model/quyền, tự duyệt dialog chờ và chờ đến khi nhận câu trả lời cuối cùng",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt": { "type": "string", "description": "Nội dung nhiệm vụ gửi cho Antigravity" },
+                  "project": { "type": "string" },
+                  "model": { "type": "string" },
+                  "permissions": { "type": "string", "enum": ["Request Review", "Turbo"] },
+                  "conversationId": { "type": "string" },
+                  "newConversation": { "type": "boolean", "default": true },
+                  "attachFiles": { "type": "array", "items": { "type": "string" } },
+                  "waitTimeoutMs": { "type": "integer", "default": 300000 },
+                  "cdpPort": { "type": "integer" }
+                },
+                "required": ["prompt"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Kết quả thực thi task từ Antigravity IDE"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/agy/chat": {
+      "get": {
+        "operationId": "readAntigravityCdpChat",
+        "summary": "Đọc lịch sử hội thoại hiện tại của Antigravity IDE",
+        "description": "Đọc các lượt hội thoại (You said / Agent said) và câu trả lời mới nhất qua CDP",
+        "parameters": [
+          {
+            "name": "cdpPort",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lịch sử các lượt hội thoại"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/agy/control": {
+      "post": {
+        "operationId": "controlAntigravityCdp",
+        "summary": "Điều khiển phiên Antigravity IDE qua CDP",
+        "description": "Các thao tác: new_chat, stop, select_project, select_model, set_permissions, approve_waiting, screenshot",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "new_chat",
+                      "stop",
+                      "select_project",
+                      "select_model",
+                      "set_permissions",
+                      "approve_waiting",
+                      "screenshot"
+                    ]
+                  },
+                  "value": { "type": "string" },
+                  "cdpPort": { "type": "integer" },
+                  "autoLaunch": { "type": "boolean", "default": false }
+                },
+                "required": ["action"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Kết quả thao tác điều khiển"
           }
         }
       }

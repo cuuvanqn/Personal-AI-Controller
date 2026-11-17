@@ -35,6 +35,12 @@ import {
   startSocialBot,
   stopSocialBot
 } from "../social-bot";
+import {
+  getAntigravityStatus,
+  runAntigravityTask,
+  readAntigravityChat,
+  controlAntigravity
+} from "../tools/antigravity-cdp-tools";
 
 export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity: (event: any) => void): Promise<Response | null> {
   // 1. External MCP Tools Proxy (Custom GPT Actions & REST API)
@@ -204,6 +210,40 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
         stopSocialBot();
         return jsonResponse({ ok: true, message: "Disconnected" });
       }
+
+      if (toolName === "agy_status") {
+        const res = await getAntigravityStatus({ cdpPort: body.cdpPort, autoLaunch: body.autoLaunch });
+        handleMcpActivity({ type: "agy_cdp", action: "status", cdpAvailable: res.cdpAvailable });
+        return jsonResponse(res);
+      }
+
+      if (toolName === "agy_run_task") {
+        const prompt = body.prompt || body.task || body.text;
+        if (!prompt) return errorResponse("Thiếu tham số 'prompt'", 400);
+        const res = await runAntigravityTask(prompt, body);
+        handleMcpActivity({ type: "agy_cdp", action: "run_task", ok: res.ok });
+        return jsonResponse(res, res.ok ? 200 : 500);
+      }
+
+      if (toolName === "agy_read_chat") {
+        try {
+          const res = await readAntigravityChat({ cdpPort: body.cdpPort });
+          return jsonResponse(res);
+        } catch (err: any) {
+          return errorResponse(err.message, 500);
+        }
+      }
+
+      if (toolName === "agy_control") {
+        if (!body.action) return errorResponse("Thiếu tham số 'action'", 400);
+        try {
+          const res = await controlAntigravity(body);
+          handleMcpActivity({ type: "agy_cdp", action: body.action });
+          return jsonResponse(res);
+        } catch (err: any) {
+          return errorResponse(err.message, 500);
+        }
+      }
     }
 
     const result = await executeExternalTool(serverKey, toolName, body, handleMcpActivity);
@@ -231,12 +271,7 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
     const proto = req.headers.get("x-forwarded-proto") || (url.protocol.startsWith("https") ? "https" : (isTrusted ? "http" : "https"));
     const serverBaseUrl = `${proto}://${url.host}`;
 
-    const builtInServer = {
-      name: "otter_core",
-      status: "connected",
-      url: `${serverBaseUrl}/mcp`,
-      toolsCount: 14,
-      tools: [
+    const builtInTools = [
         {
           name: "browser_engine_status",
           qualifiedName: "otter_core_browser_engine_status",
@@ -392,8 +427,39 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
           qualifiedName: "otter_core_social_bot_disconnect",
           title: "Ngắt kết nối Social Bot",
           description: "Ngắt kết nối Social Bot khỏi MXH Socket.IO server."
+        },
+        {
+          name: "agy_status",
+          qualifiedName: "otter_core_agy_status",
+          title: "Trạng thái CDP Antigravity IDE",
+          description: "Kiểm tra kết nối CDP tới ứng dụng Antigravity IDE, trạng thái đăng nhập, project/model đang chọn."
+        },
+        {
+          name: "agy_run_task",
+          qualifiedName: "otter_core_agy_run_task",
+          title: "Giao nhiệm vụ cho Antigravity IDE qua CDP",
+          description: "Gửi prompt vào Antigravity IDE qua CDP, chọn project/model/quyền, tự duyệt dialog chờ và lấy câu trả lời cuối cùng."
+        },
+        {
+          name: "agy_read_chat",
+          qualifiedName: "otter_core_agy_read_chat",
+          title: "Đọc hội thoại Antigravity IDE",
+          description: "Đọc các lượt hội thoại (You said / Agent said) và trạng thái thực thi hiện tại của Antigravity IDE."
+        },
+        {
+          name: "agy_control",
+          qualifiedName: "otter_core_agy_control",
+          title: "Điều khiển phiên Antigravity IDE",
+          description: "Thực hiện thao tác trên Antigravity IDE: new_chat, stop, select_project, select_model, set_permissions, approve_waiting, screenshot."
         }
-      ],
+      ];
+
+    const builtInServer = {
+      name: "otter_core",
+      status: "connected",
+      url: `${serverBaseUrl}/mcp`,
+      toolsCount: builtInTools.length,
+      tools: builtInTools,
       lastChecked: Date.now(),
       error: null
     };

@@ -29,10 +29,16 @@ import {
 import { listWindows, takeScreenshot, mouseAction, keyboardAction, executeCuaTool, getCuaToolList } from "../desktop";
 import { invokeVpsSsh } from "../vps";
 import { dispatchBridgeTask, clearTaskQueue } from "../tools/task-bridge";
+import {
+  getAntigravityStatus,
+  runAntigravityTask,
+  readAntigravityChat,
+  controlAntigravity,
+} from "../tools/antigravity-cdp-tools";
 import { getSocialBotStatus, sendSocialMessage, startSocialBot, stopSocialBot, getRecentChatMessages } from "../social-bot";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { assertSafePath } from "../security";
+import { assertSafePath, getAuthToken } from "../security";
 import { jsonResponse, errorResponse } from "./common";
 import { matchDaemonRoute, matchDaemonRoutePrefix, getDaemonRoute } from "./lcg-routes";
 import {
@@ -65,40 +71,68 @@ export async function handleActivityRoutes(
     return jsonResponse(res);
   }
 
-  // 2. Action: Đọc tệp tin với bảo vệ chống Path Traversal
+  // 2. Action: Đọc tệp tin với bảo vệ chống Path Traversal & hỗ trợ nhị phân Base64
   if (matchDaemonRoute(url.pathname, "ACT_FILES_READ") && req.method === "POST") {
     try {
       const body: any = await req.json();
       const fullPath = assertSafePath(body.filePath);
-      const content = await fs.readFile(fullPath, "utf-8");
+      const rawBuf = await fs.readFile(fullPath);
+      const ext = path.extname(fullPath).toLowerCase();
+      const binaryExts = new Set([
+        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp",
+        ".pdf", ".zip", ".gz", ".tar", ".mp4", ".mp3", ".wav", ".webm",
+        ".exe", ".dll", ".sqlite", ".db"
+      ]);
+      const requestedEncoding = typeof body.encoding === "string" ? body.encoding.toLowerCase() : "auto";
+      const hasNullByte = rawBuf.subarray(0, Math.min(rawBuf.length, 4096)).includes(0);
+      const useBase64 =
+        requestedEncoding === "base64" ||
+        (requestedEncoding === "auto" && (binaryExts.has(ext) || hasNullByte));
 
       handleMcpActivity({
         type: "file_action",
-        action: "read",
-        path: fullPath
+        action: useBase64 ? "read_base64" : "read",
+        path: fullPath,
+        byteLength: rawBuf.length
       });
 
-      return jsonResponse({ content });
+      if (useBase64) {
+        return jsonResponse({
+          content: rawBuf.toString("base64"),
+          encoding: "base64",
+          byteLength: rawBuf.length
+        });
+      }
+
+      return jsonResponse({
+        content: rawBuf.toString("utf-8"),
+        encoding: "utf8",
+        byteLength: rawBuf.length
+      });
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }
   }
 
-  // 3. Action: Ghi tệp tin với bảo vệ chống Path Traversal
+  // 3. Action: Ghi tệp tin với bảo vệ chống Path Traversal & hỗ trợ Base64
   if (matchDaemonRoute(url.pathname, "ACT_FILES_WRITE") && req.method === "POST") {
     try {
       const body: any = await req.json();
       const fullPath = assertSafePath(body.filePath);
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, body.content, "utf-8");
+      const isBase64 = typeof body.encoding === "string" && body.encoding.toLowerCase() === "base64";
+      const dataToWrite = isBase64 ? Buffer.from(body.content || "", "base64") : String(body.content ?? "");
+      await fs.writeFile(fullPath, dataToWrite as any, isBase64 ? undefined : "utf-8");
 
+      const byteLen = typeof dataToWrite === "string" ? Buffer.byteLength(dataToWrite, "utf-8") : dataToWrite.length;
       handleMcpActivity({
         type: "file_action",
         action: "write",
-        path: fullPath
+        path: fullPath,
+        byteLength: byteLen
       });
 
-      return jsonResponse({ success: true, message: `Saved ${body.content.length} bytes.` });
+      return jsonResponse({ success: true, byteLength: byteLen, message: `Saved ${byteLen} bytes.` });
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }
@@ -668,13 +702,71 @@ export async function handleActivityRoutes(
       if (!toolName) return errorResponse("Thiếu tham số 'toolName'", 400);
 
       const client = new Client({ name: "http-caller", version: "1.0.0" }, { capabilities: {} });
-      const transport = new SSEClientTransport(new URL(`http://127.0.0.1:${process.env.PORT || 1993}/sse`));
+      const internalToken = getAuthToken();
+      const sseUrl = new URL(`http://127.0.0.1:${process.env.PORT || 1993}/sse`);
+      if (internalToken) sseUrl.searchParams.set("token", internalToken);
+      const transport = new SSEClientTransport(sseUrl);
       await client.connect(transport);
       const res: any = await client.callTool({ name: toolName, arguments: body.arguments || {} });
       await client.close();
 
       handleMcpActivity({ type: "mcp_tool_call", tool: toolName, server: "internal" });
       return jsonResponse({ ok: true, tool: toolName, result: res });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  // 8b. Antigravity IDE CDP Bridge Endpoints
+  if (url.pathname === "/api/activity/v1/agy/status" && (req.method === "GET" || req.method === "POST")) {
+    try {
+      let body: any = {};
+      if (req.method === "POST") {
+        try { body = await req.json(); } catch {}
+      }
+      const cdpPort = body.cdpPort ?? (url.searchParams.get("cdpPort") ? Number(url.searchParams.get("cdpPort")) : undefined);
+      const autoLaunch = body.autoLaunch ?? (url.searchParams.get("autoLaunch") === "true");
+      const res = await getAntigravityStatus({ cdpPort, autoLaunch });
+      handleMcpActivity({ type: "agy_cdp", action: "status", cdpAvailable: res.cdpAvailable, cdpPort: res.cdpPort });
+      return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/agy/run" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      const prompt = body.prompt || body.task || body.text;
+      if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+        return errorResponse("Thiếu tham số bắt buộc 'prompt'", 400);
+      }
+      handleMcpActivity({ type: "agy_cdp", action: "run_task_start", prompt: prompt.slice(0, 120) });
+      const res = await runAntigravityTask(prompt.trim(), body);
+      handleMcpActivity({ type: "agy_cdp", action: "run_task_done", ok: res.ok });
+      return jsonResponse(res, res.ok ? 200 : 500);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/agy/chat" && req.method === "GET") {
+    try {
+      const cdpPort = url.searchParams.get("cdpPort") ? Number(url.searchParams.get("cdpPort")) : undefined;
+      const res = await readAntigravityChat({ cdpPort });
+      return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/agy/control" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (!body.action) return errorResponse("Thiếu tham số 'action'", 400);
+      const res = await controlAntigravity(body);
+      handleMcpActivity({ type: "agy_cdp", action: body.action });
+      return jsonResponse(res);
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }

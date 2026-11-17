@@ -86,6 +86,8 @@ const METHOD_ALIASES: Record<string, string> = {
   "tasks/list": "ListTasks",
   CancelTask: "CancelTask",
   "tasks/cancel": "CancelTask",
+  AcknowledgeTask: "AcknowledgeTask",
+  "tasks/ack": "AcknowledgeTask",
   SubscribeToTask: "SubscribeToTask",
   GetExtendedAgentCard: "GetExtendedAgentCard",
 };
@@ -114,6 +116,8 @@ interface A2aRow {
   loopId: string | null;
   pushUrl: string | null;
   pushToken: string | null;
+  ackedAt: number | null;
+  ackedBy: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -129,12 +133,16 @@ function ensureA2aTables(db: DbLike): void {
       loop_id TEXT,
       push_url TEXT,
       push_token TEXT,
+      acked_at INTEGER,
+      acked_by TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_a2a_tasks_created ON a2a_tasks(created_at);
     CREATE INDEX IF NOT EXISTS idx_a2a_tasks_state ON a2a_tasks(state, created_at);
   `);
+  try { db.exec("ALTER TABLE a2a_tasks ADD COLUMN acked_at INTEGER"); } catch {}
+  try { db.exec("ALTER TABLE a2a_tasks ADD COLUMN acked_by TEXT"); } catch {}
 }
 
 function rowToA2aRow(row: Record<string, unknown>): A2aRow {
@@ -147,6 +155,8 @@ function rowToA2aRow(row: Record<string, unknown>): A2aRow {
     loopId: row.loop_id ? String(row.loop_id) : null,
     pushUrl: row.push_url ? String(row.push_url) : null,
     pushToken: row.push_token ? String(row.push_token) : null,
+    ackedAt: row.acked_at !== null && row.acked_at !== undefined ? Number(row.acked_at) : null,
+    ackedBy: row.acked_by ? String(row.acked_by) : null,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -325,6 +335,16 @@ function toTask(row: A2aRow, state: A2aTaskState): A2aTask {
     id: row.id,
     contextId: row.contextId ?? row.id,
     status: { state, timestamp: new Date(row.updatedAt).toISOString() },
+    ...(row.ackedAt
+      ? {
+          metadata: {
+            ack: {
+              ackedAt: new Date(row.ackedAt).toISOString(),
+              ackedBy: row.ackedBy ?? "otter",
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -513,6 +533,7 @@ function sseStreamForTask(db: DbLike, row: A2aRow, rpcId: unknown, initialTask: 
       // next poll, so "changed since last poll" cannot be the emit
       // condition — "different from what this stream last sent" is.
       let lastSentState = initialTask.status.state;
+      let lastSentAckedAt = row.ackedAt;
       send({ task: initialTask });
       const startedAt = Date.now();
       timer = setInterval(() => {
@@ -524,9 +545,19 @@ function sseStreamForTask(db: DbLike, row: A2aRow, rpcId: unknown, initialTask: 
             return;
           }
           const { task } = syncTaskState(db, fresh);
-          if (task.status.state !== lastSentState) {
+          const ackChanged = fresh.ackedAt !== lastSentAckedAt;
+          if (task.status.state !== lastSentState || ackChanged) {
             lastSentState = task.status.state;
-            send({ statusUpdate: { taskId: task.id, contextId: task.contextId, status: task.status, final: isA2aTerminalState(task.status.state) } });
+            lastSentAckedAt = fresh.ackedAt;
+            send({
+              statusUpdate: {
+                taskId: task.id,
+                contextId: task.contextId,
+                status: task.status,
+                final: isA2aTerminalState(task.status.state),
+                ...(task.metadata ? { metadata: task.metadata } : {}),
+              } as any,
+            });
           }
           if (isA2aTerminalState(task.status.state)) {
             close();
@@ -685,6 +716,28 @@ async function handleRpc(db: DbLike, req: Request, body: any): Promise<Response>
       const canceled: A2aRow = { ...row, state: "TASK_STATE_CANCELED", updatedAt: now };
       const task = toTask(canceled, "TASK_STATE_CANCELED");
       void notifyPush(canceled, { statusUpdate: { taskId: task.id, contextId: task.contextId, status: task.status, final: true } });
+      return rpcResult(rpcId, task);
+    }
+
+    case "AcknowledgeTask": {
+      const id = params?.id ?? params?.taskId;
+      if (!isValidTaskIdFormat(id)) {
+        return rpcError(rpcId, A2A_ERROR_CODES.TaskNotFound, `Task not found: ${String(id ?? "")}`, 200, errorData("TASK_NOT_FOUND", { taskId: String(id ?? "") }));
+      }
+      const row = getA2aRow(db, id);
+      if (!row) {
+        return rpcError(rpcId, A2A_ERROR_CODES.TaskNotFound, `Task not found: ${id}`, 200, errorData("TASK_NOT_FOUND", { taskId: id }));
+      }
+      const current = resolveTaskState(db, row);
+      if (row.ackedAt) {
+        return rpcResult(rpcId, toTask(row, current));
+      }
+      const now = Date.now();
+      const ackedBy = typeof params?.ackedBy === "string" && params.ackedBy.trim() ? params.ackedBy.trim() : "otter";
+      db.run("UPDATE a2a_tasks SET acked_at = ?, acked_by = ?, updated_at = ? WHERE id = ?", [now, ackedBy, now, id]);
+      const ackedRow: A2aRow = { ...row, ackedAt: now, ackedBy, updatedAt: now };
+      const task = toTask(ackedRow, current);
+      void notifyPush(ackedRow, { statusUpdate: { taskId: task.id, contextId: task.contextId, status: task.status, final: false, ...(task.metadata ? { metadata: task.metadata } : {}) } as any });
       return rpcResult(rpcId, task);
     }
 

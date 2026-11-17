@@ -27,7 +27,8 @@ import {
   registerMuseTools,
   registerFbMediaPostTools,
   registerGpmTools,
-  registerSocialBotTools
+  registerSocialBotTools,
+  registerAntigravityCdpTools
 } from "./tools";
 
 /**
@@ -37,7 +38,7 @@ import {
 export function createMcpServer(onActivity?: (event: any) => void): McpServer {
   const mcp = new McpServer({
     name: "Otter",
-    version: "2.0.0"
+    version: "2.1.0"
   });
 
   // 1. Công cụ Terminal, File I/O và Media (TTS, Remotion, DSP Audio)
@@ -126,6 +127,9 @@ export function createMcpServer(onActivity?: (event: any) => void): McpServer {
 
   // 19. Social Task Mesh — Bot Client kết nối MXH Socket.IO
   registerSocialBotTools(mcp, onActivity);
+
+  // 20. Antigravity IDE CDP Bridge — Điều khiển trực tiếp Antigravity qua Chrome DevTools Protocol
+  registerAntigravityCdpTools(mcp, onActivity);
 
   return mcp;
 }

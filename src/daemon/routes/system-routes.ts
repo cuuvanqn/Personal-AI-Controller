@@ -12,6 +12,31 @@ import { getQuickTunnelStatus, startQuickTunnel, stopQuickTunnel, openTunnelInBr
 import { matchDaemonRoute } from "./lcg-routes";
 
 export async function handleSystemRoutes(req: Request, url: URL, port: number): Promise<Response | null> {
+  // -1. Public Health Check Endpoint
+  if ((url.pathname === "/health" || url.pathname === "/api/health") && req.method === "GET") {
+    const tunnel = getQuickTunnelStatus();
+    const tailscaleIp = getTailscaleIp();
+    const { getExternalServersState } = await import("../mcp-gateway");
+    const { getSocialBotStatus } = await import("../social-bot");
+    const ext = getExternalServersState();
+    const social = getSocialBotStatus();
+    return jsonResponse({
+      status: "ok",
+      service: "otter-daemon",
+      version: "2.1.0",
+      platform: process.platform,
+      uptime: Math.round(process.uptime()),
+      port,
+      tailscaleIp: tailscaleIp || null,
+      tunnelStatus: tunnel.status,
+      socialBotConnected: social.connected,
+      externalMcpServers: {
+        total: ext.length,
+        connected: ext.filter((s) => s.status === "connected").length,
+      },
+    }, 200, {}, req);
+  }
+
   // 0. Quản lý bản quyền (Licensing)
   if (matchDaemonRoute(url.pathname, "SYS_LICENSE") && req.method === "GET") {
     const status = await getLicenseStatus();

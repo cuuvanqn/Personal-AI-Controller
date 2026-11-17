@@ -25,4 +25,12 @@ export { registerMuseTools } from "./muse-tools";
 export { registerFbMediaPostTools } from "./fb-media-post-tools";
 export { registerGpmTools } from "./gpm-tools";
 export { registerSocialBotTools } from "./social-bot-tools";
+export {
+  registerAntigravityCdpTools,
+  getAntigravityStatus,
+  runAntigravityTask,
+  readAntigravityChat,
+  controlAntigravity,
+} from "./antigravity-cdp-tools";
+
 

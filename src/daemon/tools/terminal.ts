@@ -41,20 +41,47 @@ export function registerTerminalAndFileTools(mcp: McpServer, onActivity?: (event
     }
   );
 
-  // Tool 2: Đọc file với hỗ trợ phân đoạn theo dòng và bảo vệ chống Path Traversal
+  // Tool 2: Đọc file với hỗ trợ phân đoạn theo dòng, đọc nhị phân Base64 và bảo vệ chống Path Traversal
   mcp.tool(
     "read_file",
-    "Đọc nội dung tệp tin. Hỗ trợ đọc toàn bộ hoặc đọc chính xác từ dòng startLine đến dòng endLine (1-indexed).",
+    "Đọc nội dung tệp tin. Hỗ trợ đọc văn bản UTF-8 theo dòng (startLine..endLine) hoặc đọc tệp nhị phân (ảnh, zip, pdf) nguyên vẹn dưới dạng Base64 qua encoding='base64'.",
     {
       filePath: z.string().describe("Đường dẫn tuyệt đối hoặc tương đối của tệp"),
       startLine: z.number().int().min(1).optional().describe("Dòng bắt đầu đọc (1-indexed). Để trống để đọc từ đầu tệp."),
       endLine: z.number().int().min(1).optional().describe("Dòng kết thúc đọc (1-indexed). Để trống để đọc đến hết tệp."),
-      withLineNumbers: z.boolean().default(true).describe("Đính kèm số dòng (ví dụ: '  42: const x = 1;') để dễ định vị vị trí")
+      withLineNumbers: z.boolean().default(true).describe("Đính kèm số dòng (ví dụ: '  42: const x = 1;') để dễ định vị vị trí"),
+      encoding: z.enum(["utf8", "base64", "auto"]).optional().describe("Chế độ mã hóa: 'utf8' (mặc định cho code/text), 'base64' (cho ảnh/nhị phân), hoặc 'auto' (tự phát hiện file nhị phân)")
     },
-    async ({ filePath, startLine, endLine, withLineNumbers }) => {
+    async ({ filePath, startLine, endLine, withLineNumbers, encoding }) => {
       try {
         const fullPath = assertSafePath(filePath);
-        const content = await fs.readFile(fullPath, "utf-8");
+        const rawBuf = await fs.readFile(fullPath);
+        const ext = path.extname(fullPath).toLowerCase();
+        const binaryExts = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".pdf", ".zip", ".gz", ".tar", ".mp4", ".mp3", ".wav", ".webm", ".exe", ".dll", ".sqlite", ".db"]);
+        const hasNullByte = rawBuf.subarray(0, Math.min(rawBuf.length, 4096)).includes(0);
+        const useBase64 = encoding === "base64" || (encoding === "auto" && (binaryExts.has(ext) || hasNullByte));
+
+        if (useBase64) {
+          onActivity?.({
+            type: "file_action",
+            action: "read_base64",
+            path: fullPath,
+            byteLength: rawBuf.length
+          });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                filePath: fullPath,
+                encoding: "base64",
+                byteLength: rawBuf.length,
+                content: rawBuf.toString("base64")
+              })
+            }]
+          };
+        }
+
+        const content = rawBuf.toString("utf-8");
         const allLines = content.split(/\r?\n/);
         const totalLines = allLines.length;
 
