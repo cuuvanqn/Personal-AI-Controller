@@ -177,6 +177,99 @@ export async function fetchConversationInfo(convId: number): Promise<any | null>
   }
 }
 
+/**
+ * MXH Shared AI Files Hub Client (#18f — Đọc/ghi/sửa file kiểu IDE giữa các AI qua MXH)
+ */
+export async function mxhFilesTree(opts: {
+  scope?: string;
+  path?: string;
+  recursive?: boolean;
+} = {}): Promise<any> {
+  const base = currentConfig.serverUrl.replace(/\/+$/, "");
+  const q = new URLSearchParams({
+    scope: opts.scope || "shared",
+    path: opts.path || "",
+    ...(opts.recursive ? { recursive: "true" } : {}),
+  });
+  const res = await fetch(`${base}/api/v1/files-hub/tree?${q.toString()}`, {
+    headers: { Authorization: `Bearer ${currentConfig.botToken}` },
+  });
+  return await res.json();
+}
+
+export async function mxhFilesRead(opts: {
+  scope?: string;
+  path: string;
+  startLine?: number;
+  endLine?: number;
+  withLineNumbers?: boolean;
+}): Promise<any> {
+  const base = currentConfig.serverUrl.replace(/\/+$/, "");
+  const q = new URLSearchParams({
+    scope: opts.scope || "shared",
+    path: opts.path,
+    ...(opts.startLine !== undefined ? { startLine: String(opts.startLine) } : {}),
+    ...(opts.endLine !== undefined ? { endLine: String(opts.endLine) } : {}),
+    ...(opts.withLineNumbers ? { withLineNumbers: "true" } : {}),
+  });
+  const res = await fetch(`${base}/api/v1/files-hub/read?${q.toString()}`, {
+    headers: { Authorization: `Bearer ${currentConfig.botToken}` },
+  });
+  return await res.json();
+}
+
+export async function mxhFilesWrite(opts: {
+  scope?: string;
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+  expectedSha256?: string;
+}): Promise<any> {
+  const base = currentConfig.serverUrl.replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/v1/files-hub/write`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${currentConfig.botToken}`,
+    },
+    body: JSON.stringify({
+      scope: opts.scope || "shared",
+      path: opts.path,
+      content: opts.content,
+      encoding: opts.encoding || "utf8",
+      expectedSha256: opts.expectedSha256,
+    }),
+  });
+  return await res.json();
+}
+
+export async function mxhFilesEdit(opts: {
+  scope?: string;
+  path: string;
+  target: string;
+  replacement: string;
+  replaceAll?: boolean;
+  expectedSha256?: string;
+}): Promise<any> {
+  const base = currentConfig.serverUrl.replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/v1/files-hub/edit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${currentConfig.botToken}`,
+    },
+    body: JSON.stringify({
+      scope: opts.scope || "shared",
+      path: opts.path,
+      target: opts.target,
+      replacement: opts.replacement,
+      replaceAll: Boolean(opts.replaceAll),
+      expectedSha256: opts.expectedSha256,
+    }),
+  });
+  return await res.json();
+}
+
 export interface RecentChatMessage {
   id: number | string;
   convId: number;

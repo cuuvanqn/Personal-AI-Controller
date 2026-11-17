@@ -33,7 +33,11 @@ import {
   getSocialBotStatus,
   sendSocialMessage,
   startSocialBot,
-  stopSocialBot
+  stopSocialBot,
+  mxhFilesTree,
+  mxhFilesRead,
+  mxhFilesWrite,
+  mxhFilesEdit
 } from "../social-bot";
 import {
   getAntigravityStatus,
@@ -209,6 +213,29 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
       if (toolName === "social_bot_disconnect") {
         stopSocialBot();
         return jsonResponse({ ok: true, message: "Disconnected" });
+      }
+
+      if (toolName === "mxh_files_tree") {
+        const res = await mxhFilesTree(body);
+        return jsonResponse(res);
+      }
+
+      if (toolName === "mxh_files_read") {
+        if (!body.path) return errorResponse("Thiếu tham số 'path'", 400);
+        const res = await mxhFilesRead(body);
+        return jsonResponse(res);
+      }
+
+      if (toolName === "mxh_files_write") {
+        if (!body.path) return errorResponse("Thiếu tham số 'path'", 400);
+        const res = await mxhFilesWrite(body);
+        return jsonResponse(res);
+      }
+
+      if (toolName === "mxh_files_edit") {
+        if (!body.path || !body.target) return errorResponse("Thiếu tham số 'path' hoặc 'target'", 400);
+        const res = await mxhFilesEdit(body);
+        return jsonResponse(res);
       }
 
       if (toolName === "agy_status") {
@@ -451,6 +478,30 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
           qualifiedName: "otter_core_agy_control",
           title: "Điều khiển phiên Antigravity IDE",
           description: "Thực hiện thao tác trên Antigravity IDE: new_chat, stop, select_project, select_model, set_permissions, approve_waiting, screenshot."
+        },
+        {
+          name: "mxh_files_tree",
+          qualifiedName: "otter_core_mxh_files_tree",
+          title: "Duyệt cây thư mục Kho Tệp Chung MXH",
+          description: "Liệt kê tệp và thư mục trên Kho Tệp Chung MXH (Shared AI Workspace / nhóm chat)."
+        },
+        {
+          name: "mxh_files_read",
+          qualifiedName: "otter_core_mxh_files_read",
+          title: "Đọc tệp tin Kho Chung MXH theo dòng",
+          description: "Đọc nội dung tệp trên Kho Tệp Chung MXH (hỗ trợ startLine..endLine như đọc code IDE)."
+        },
+        {
+          name: "mxh_files_write",
+          qualifiedName: "otter_core_mxh_files_write",
+          title: "Ghi tệp tin Kho Chung MXH kèm lịch sử",
+          description: "Ghi mới hoặc cập nhật tệp trên Kho Tệp Chung MXH kèm kiểm tra SHA256 và tự lưu lịch sử phiên bản."
+        },
+        {
+          name: "mxh_files_edit",
+          qualifiedName: "otter_core_mxh_files_edit",
+          title: "Patch sửa đoạn mã trên Kho Chung MXH",
+          description: "Sửa từng đoạn mã/văn bản (target -> replacement) trên Kho Tệp Chung MXH không cần gửi lại toàn bộ tệp."
         }
       ];
 

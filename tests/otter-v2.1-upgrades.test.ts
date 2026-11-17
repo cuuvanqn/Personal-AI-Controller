@@ -21,7 +21,7 @@ describe("Otter v2.1 Core Upgrades", () => {
     expect(body.version).toBe("2.1.0");
   });
 
-  test("GET /api/mcp/servers exposes dynamic toolsCount matching otter_core tools including agy_*", async () => {
+  test("GET /api/mcp/servers exposes dynamic toolsCount matching otter_core tools including agy_* and mxh_files_*", async () => {
     const req = new Request("http://127.0.0.1:1993/api/mcp/servers");
     const res = await handleMcpRoutes(req, new URL(req.url), () => {});
     expect(res).not.toBeNull();
@@ -29,12 +29,23 @@ describe("Otter v2.1 Core Upgrades", () => {
     const core = body.servers.find((s: any) => s.name === "otter_core");
     expect(core).toBeDefined();
     expect(core.toolsCount).toBe(core.tools.length);
-    expect(core.toolsCount).toBeGreaterThanOrEqual(30);
+    expect(core.toolsCount).toBeGreaterThanOrEqual(34);
     const names = core.tools.map((t: any) => t.name);
     expect(names).toContain("agy_status");
     expect(names).toContain("agy_run_task");
     expect(names).toContain("agy_read_chat");
     expect(names).toContain("agy_control");
+    expect(names).toContain("mxh_files_tree");
+    expect(names).toContain("mxh_files_read");
+    expect(names).toContain("mxh_files_write");
+    expect(names).toContain("mxh_files_edit");
+
+    const openApiRaw = await fs.readFile(path.resolve(import.meta.dir, "..", "openapi.json"), "utf8");
+    const openApi = JSON.parse(openApiRaw);
+    expect(openApi.paths["/api/activity/v1/social/files/tree"]).toBeDefined();
+    expect(openApi.paths["/api/activity/v1/social/files/read"]).toBeDefined();
+    expect(openApi.paths["/api/activity/v1/social/files/write"]).toBeDefined();
+    expect(openApi.paths["/api/activity/v1/social/files/edit"]).toBeDefined();
   });
 
   test("POST /api/activity/v1/files/read preserves binary PNG bytes lossless via auto Base64", async () => {

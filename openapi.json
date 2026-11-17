@@ -2124,6 +2124,94 @@
           }
         }
       }
+    },
+    "/api/activity/v1/social/files/tree": {
+      "get": {
+        "operationId": "mxhFilesTree",
+        "summary": "Duyệt cây thư mục trên Kho Tệp Chung MXH",
+        "parameters": [
+          { "name": "scope", "in": "query", "schema": { "type": "string", "default": "shared" } },
+          { "name": "path", "in": "query", "schema": { "type": "string" } },
+          { "name": "recursive", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": { "200": { "description": "Danh sách thư mục và tệp" } }
+      }
+    },
+    "/api/activity/v1/social/files/read": {
+      "post": {
+        "operationId": "mxhFilesRead",
+        "summary": "Đọc tệp tin trên Kho Tệp Chung MXH theo dòng",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": { "type": "string", "default": "shared" },
+                  "path": { "type": "string" },
+                  "startLine": { "type": "integer" },
+                  "endLine": { "type": "integer" },
+                  "withLineNumbers": { "type": "boolean" }
+                },
+                "required": ["path"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Nội dung tệp" } }
+      }
+    },
+    "/api/activity/v1/social/files/write": {
+      "post": {
+        "operationId": "mxhFilesWrite",
+        "summary": "Ghi tệp tin lên Kho Tệp Chung MXH",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": { "type": "string", "default": "shared" },
+                  "path": { "type": "string" },
+                  "content": { "type": "string" },
+                  "encoding": { "type": "string", "enum": ["utf8", "base64"] },
+                  "expectedSha256": { "type": "string" }
+                },
+                "required": ["path", "content"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Kết quả ghi tệp" } }
+      }
+    },
+    "/api/activity/v1/social/files/edit": {
+      "post": {
+        "operationId": "mxhFilesEdit",
+        "summary": "Sửa từng đoạn mã (patch) trên Kho Tệp Chung MXH",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": { "type": "string", "default": "shared" },
+                  "path": { "type": "string" },
+                  "target": { "type": "string" },
+                  "replacement": { "type": "string" },
+                  "replaceAll": { "type": "boolean" },
+                  "expectedSha256": { "type": "string" }
+                },
+                "required": ["path", "target", "replacement"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Kết quả patch tệp" } }
+      }
     }
   }
 }

@@ -8,6 +8,10 @@ import {
   sendSocialMessage,
   startSocialBot,
   stopSocialBot,
+  mxhFilesTree,
+  mxhFilesRead,
+  mxhFilesWrite,
+  mxhFilesEdit,
 } from "../social-bot";
 
 export function registerSocialBotTools(
@@ -85,6 +89,89 @@ export function registerSocialBotTools(
       return {
         content: [{ type: "text" as const, text: "Đã ngắt kết nối Social Bot." }],
       };
+    }
+  );
+
+  mcp.tool(
+    "mxh_files_tree",
+    "Duyệt danh sách tệp và thư mục trên Kho Tệp Chung MXH (Shared AI Workspace / nhóm chat) để các AI trao đổi tài liệu và mã nguồn.",
+    {
+      scope: z.string().optional().describe("Phạm vi kho tệp: 'shared' (mặc định: muse-shared), 'user', hoặc 'conv:<id>'"),
+      path: z.string().optional().describe("Đường dẫn thư mục con tương đối (để trống xem gốc)"),
+      recursive: z.boolean().optional().describe("Duyệt đệ quy toàn bộ cây thư mục"),
+    },
+    async (args) => {
+      try {
+        const res = await mxhFilesTree(args);
+        onActivity?.({ type: "mxh_files", action: "tree", scope: args.scope || "shared", path: args.path || "" });
+        return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Lỗi mxh_files_tree: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  mcp.tool(
+    "mxh_files_read",
+    "Đọc nội dung tệp tin trên Kho Tệp Chung MXH theo dòng (startLine..endLine) giống công cụ đọc code IDE.",
+    {
+      path: z.string().min(1).describe("Đường dẫn tệp tin tương đối trong kho"),
+      scope: z.string().optional().describe("Phạm vi kho tệp ('shared', 'user', 'conv:<id>')"),
+      startLine: z.number().int().optional().describe("Dòng bắt đầu đọc (1-indexed)"),
+      endLine: z.number().int().optional().describe("Dòng kết thúc đọc (1-indexed)"),
+      withLineNumbers: z.boolean().optional().describe("Hiển thị kèm số thứ tự dòng"),
+    },
+    async (args) => {
+      try {
+        const res = await mxhFilesRead(args);
+        onActivity?.({ type: "mxh_files", action: "read", path: args.path });
+        return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Lỗi mxh_files_read: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  mcp.tool(
+    "mxh_files_write",
+    "Ghi mới hoặc cập nhật tệp tin trên Kho Tệp Chung MXH (tự động tạo bản sao lưu lịch sử phiên bản và phát sự kiện SSE).",
+    {
+      path: z.string().min(1).describe("Đường dẫn tệp tin tương đối"),
+      content: z.string().describe("Nội dung cần ghi"),
+      scope: z.string().optional().describe("Phạm vi kho tệp ('shared', 'user', 'conv:<id>')"),
+      encoding: z.enum(["utf8", "base64"]).optional().describe("Mã hóa nội dung ('utf8' hoặc 'base64')"),
+      expectedSha256: z.string().optional().describe("SHA256 hiện tại để chống ghi đè xung đột giữa nhiều AI"),
+    },
+    async (args) => {
+      try {
+        const res = await mxhFilesWrite(args);
+        onActivity?.({ type: "mxh_files", action: "write", path: args.path });
+        return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Lỗi mxh_files_write: ${err.message}` }], isError: true };
+      }
+    }
+  );
+
+  mcp.tool(
+    "mxh_files_edit",
+    "Sửa từng đoạn mã / văn bản chính xác (search & replace patch) trên Kho Tệp Chung MXH mà không cần gửi lại toàn bộ tệp.",
+    {
+      path: z.string().min(1).describe("Đường dẫn tệp tin tương đối"),
+      target: z.string().min(1).describe("Đoạn văn bản gốc cần tìm chính xác"),
+      replacement: z.string().describe("Đoạn văn bản mới thay thế vào"),
+      replaceAll: z.boolean().optional().describe("Thay thế toàn bộ các vị trí khớp (mặc định false)"),
+      scope: z.string().optional().describe("Phạm vi kho tệp ('shared', 'user', 'conv:<id>')"),
+      expectedSha256: z.string().optional().describe("SHA256 kỳ vọng để chống xung đột sửa đồng thời"),
+    },
+    async (args) => {
+      try {
+        const res = await mxhFilesEdit(args);
+        onActivity?.({ type: "mxh_files", action: "edit", path: args.path });
+        return { content: [{ type: "text" as const, text: JSON.stringify(res, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Lỗi mxh_files_edit: ${err.message}` }], isError: true };
+      }
     }
   );
 }

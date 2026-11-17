@@ -35,7 +35,17 @@ import {
   readAntigravityChat,
   controlAntigravity,
 } from "../tools/antigravity-cdp-tools";
-import { getSocialBotStatus, sendSocialMessage, startSocialBot, stopSocialBot, getRecentChatMessages } from "../social-bot";
+import {
+  getSocialBotStatus,
+  sendSocialMessage,
+  startSocialBot,
+  stopSocialBot,
+  getRecentChatMessages,
+  mxhFilesTree,
+  mxhFilesRead,
+  mxhFilesWrite,
+  mxhFilesEdit
+} from "../social-bot";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { assertSafePath, getAuthToken } from "../security";
@@ -689,6 +699,59 @@ export async function handleActivityRoutes(
     try {
       stopSocialBot();
       return jsonResponse({ ok: true, message: "Social Bot disconnected" });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/files/tree" && req.method === "GET") {
+    try {
+      const res = await mxhFilesTree({
+        scope: url.searchParams.get("scope") || "shared",
+        path: url.searchParams.get("path") || "",
+        recursive: url.searchParams.get("recursive") === "true",
+      });
+      return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/files/read" && (req.method === "GET" || req.method === "POST")) {
+    try {
+      const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+      const filePath = body.path || url.searchParams.get("path") || "";
+      if (!filePath) return errorResponse("Thiếu tham số 'path'", 400);
+      const res = await mxhFilesRead({
+        scope: body.scope || url.searchParams.get("scope") || "shared",
+        path: filePath,
+        startLine: body.startLine ?? (url.searchParams.get("startLine") ? Number(url.searchParams.get("startLine")) : undefined),
+        endLine: body.endLine ?? (url.searchParams.get("endLine") ? Number(url.searchParams.get("endLine")) : undefined),
+        withLineNumbers: body.withLineNumbers ?? (url.searchParams.get("withLineNumbers") === "true"),
+      });
+      return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/files/write" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (!body.path) return errorResponse("Thiếu tham số 'path'", 400);
+      const res = await mxhFilesWrite(body);
+      return jsonResponse(res);
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/files/edit" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (!body.path || !body.target) return errorResponse("Thiếu tham số 'path' hoặc 'target'", 400);
+      const res = await mxhFilesEdit(body);
+      return jsonResponse(res);
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }
