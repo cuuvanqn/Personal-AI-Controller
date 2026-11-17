@@ -33,6 +33,7 @@ import {
   handleChromeRoutes,
   handlePageLoopRoutes,
   handleScheduledTasksRoutes,
+  handleA2aRoutes,
   matchDaemonRoute,
   matchDaemonRoutePrefix
 } from "./routes";
@@ -453,6 +454,7 @@ const server = Bun.serve<WsClientData>({
       url.pathname.startsWith("/storage/media/") ||
       url.pathname.startsWith("/api/activity/v1/fb/") ||
       url.pathname.startsWith("/api/activity/v1/gpm/") ||
+      url.pathname.startsWith("/api/activity/v1/social/") ||
       url.pathname === "/openapi.json" ||
       url.pathname.startsWith("/api/system/security/full-access") ||
       matchDaemonRoute(url.pathname, "MCP_SERVERS") ||
@@ -461,6 +463,7 @@ const server = Bun.serve<WsClientData>({
       matchDaemonRoutePrefix(url.pathname, "SYS_TUNNEL") ||
       url.pathname.startsWith("/assets/") ||
       url.pathname === "/.well-known/ai-plugin.json" ||
+      url.pathname === "/.well-known/agent-card.json" ||
       url.pathname === "/.well-known/oauth-protected-resource" ||
       url.pathname === "/.well-known/oauth-authorization-server" ||
       url.pathname === "/.well-known/openid-configuration" ||
@@ -614,6 +617,9 @@ const server = Bun.serve<WsClientData>({
 
     const taskRes = await handleScheduledTasksRoutes(req, url, db);
     if (taskRes) return taskRes;
+
+    const a2aRes = await handleA2aRoutes(req, url, db);
+    if (a2aRes) return a2aRes;
 
     // 8. Serve local media files (images, videos)
     if (url.pathname === "/api/media/file" && req.method === "GET") {
@@ -775,15 +781,8 @@ const server = Bun.serve<WsClientData>({
 assertHostsIntegrity();
 
 const license = await getLicenseStatus();
-if (!license.licensed) {
-  printLicenseLockBanner(license.supportCode);
-} else {
-  console.log(`[+] 🔒 License: ĐÃ KÍCH HOẠT (${license.payload?.license_type || "perpetual"})`);
-  console.log(`[+] 👤 Khách hàng: ${license.payload?.customer || "Local Owner"}`);
-  if (license.isGracePeriod) {
-    console.log(`[!] License đang trong ân hạn offline — cần mạng để heartbeat gia hạn.`);
-  }
-}
+console.log(`[+] 🔓 License: Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng`);
+console.log(`[+] 👤 Người dùng: ${license.payload?.customer || "Open Source Community"}`);
 
 // 1b. Heartbeat tự động cho leased token — trước đây sendHeartbeat không
 // có chỗ nào gọi, nên token leased hết hạn là chết dù máy vẫn online.
@@ -857,6 +856,16 @@ try {
   console.log(`[+] 🎬 FB Media Post Scheduler: ĐÃ KÍCH HOẠT (tự động quét và đăng media mỗi 10s)`);
 } catch (err: any) {
   console.warn(`[!] Không thể tự khởi động FB Media Post Scheduler: ${err.message}`);
+}
+
+import { startSocialBot } from "./social-bot";
+
+// Tự động khởi động kết nối Social Task Mesh Bot Client tới MXH
+try {
+  startSocialBot();
+  console.log(`[+] 🌐 Social Task Mesh Bot Client: ĐÃ KÍCH HOẠT (kết nối MXH Socket.IO)`);
+} catch (err: any) {
+  console.warn(`[!] Không thể tự khởi động Social Task Mesh Bot: ${err.message}`);
 }
 
 import { startQuickTunnel } from "./tunnel";

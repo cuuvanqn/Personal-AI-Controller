@@ -29,6 +29,12 @@ import {
   formatGpmCondition,
   validateXPathExpression
 } from "../gpm";
+import {
+  getSocialBotStatus,
+  sendSocialMessage,
+  startSocialBot,
+  stopSocialBot
+} from "../social-bot";
 
 export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity: (event: any) => void): Promise<Response | null> {
   // 1. External MCP Tools Proxy (Custom GPT Actions & REST API)
@@ -176,6 +182,27 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
         } catch (err: any) {
           return errorResponse(err.message, 500);
         }
+      }
+
+      if (toolName === "social_bot_status") {
+        const status = getSocialBotStatus();
+        return jsonResponse(status);
+      }
+
+      if (toolName === "social_bot_send") {
+        const res = await sendSocialMessage(body.chatId, body.text, body.replyToId);
+        return jsonResponse({ ok: !!res, data: res });
+      }
+
+      if (toolName === "social_bot_connect") {
+        startSocialBot(body);
+        const status = getSocialBotStatus();
+        return jsonResponse({ ok: true, ...status });
+      }
+
+      if (toolName === "social_bot_disconnect") {
+        stopSocialBot();
+        return jsonResponse({ ok: true, message: "Disconnected" });
       }
     }
 
@@ -341,6 +368,30 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
           qualifiedName: "otter_core_cua_execute_tool",
           title: "Thực thi công cụ CUA (Computer-Use Agent)",
           description: "Gọi trực tiếp bất kỳ công cụ nào của CUA trycua/cua: click, type_text, hotkey, get_screen_size, get_window_state, list_windows..."
+        },
+        {
+          name: "social_bot_status",
+          qualifiedName: "otter_core_social_bot_status",
+          title: "Trạng thái Social Task Bot",
+          description: "Kiểm tra kết nối Socket.IO tới Mạng Xã Hội và số task đã tiếp nhận."
+        },
+        {
+          name: "social_bot_send",
+          qualifiedName: "otter_core_social_bot_send",
+          title: "Gửi tin nhắn MXH",
+          description: "Gửi tin nhắn vào cuộc trò chuyện / nhóm chat trên Mạng Xã Hội."
+        },
+        {
+          name: "social_bot_connect",
+          qualifiedName: "otter_core_social_bot_connect",
+          title: "Kết nối Social Bot",
+          description: "Kết nối hoặc kết nối lại Social Bot tới MXH Socket.IO server."
+        },
+        {
+          name: "social_bot_disconnect",
+          qualifiedName: "otter_core_social_bot_disconnect",
+          title: "Ngắt kết nối Social Bot",
+          description: "Ngắt kết nối Social Bot khỏi MXH Socket.IO server."
         }
       ],
       lastChecked: Date.now(),

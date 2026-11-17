@@ -26,7 +26,8 @@ import {
   registerFbGroupPostTools,
   registerMuseTools,
   registerFbMediaPostTools,
-  registerGpmTools
+  registerGpmTools,
+  registerSocialBotTools
 } from "./tools";
 
 /**
@@ -122,6 +123,9 @@ export function createMcpServer(onActivity?: (event: any) => void): McpServer {
 
   // 18. GPM Automate V3 & GPM Login Local API Bridge
   registerGpmTools(mcp, onActivity);
+
+  // 19. Social Task Mesh — Bot Client kết nối MXH Socket.IO
+  registerSocialBotTools(mcp, onActivity);
 
   return mcp;
 }

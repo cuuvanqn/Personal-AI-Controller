@@ -165,12 +165,8 @@ export function printHostsTamperedBanner(reason: string, hostsPath: string): voi
 }
 
 /**
- * Đảm bảo tính toàn vẹn của tệp hosts. Nếu phát hiện bị can thiệp sẽ từ chối khởi động app.
+ * Đảm bảo tính toàn vẹn của tệp hosts. Với bản mã nguồn mở MIT, không chặn khởi động ứng dụng.
  */
 export function assertHostsIntegrity(): void {
-  const check = checkHostsIntegrity();
-  if (!check.valid) {
-    printHostsTamperedBanner(check.reason || 'Hosts file tampered', check.hostsPath || getSystemHostsPath());
-    process.exit(1);
-  }
+  // Bản mã nguồn mở MIT - cho phép người dùng tự do cấu hình môi trường, không chặn khởi động.
 }

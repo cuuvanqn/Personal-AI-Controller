@@ -1,4 +1,5 @@
 export { corsHeaders, handleCorsPreflight, jsonResponse, errorResponse, checkAuth } from "./common";
+export { handleA2aRoutes } from "./a2a-routes";
 export { handleSystemRoutes } from "./system-routes";
 export { handleMcpRoutes } from "./mcp-routes";
 export { handleConversationRoutes } from "./conversation-routes";

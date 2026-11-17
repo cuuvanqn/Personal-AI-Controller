@@ -1887,6 +1887,93 @@
           }
         }
       }
+    },
+    "/api/activity/v1/social/bot/status": {
+      "get": {
+        "operationId": "getSocialBotStatus",
+        "summary": "Xem trạng thái kết nối Social Task Bot với MXH",
+        "description": "Kiểm tra Socket.IO kết nối tới MXH backend, số task đã tiếp nhận từ nhóm chat",
+        "responses": {
+          "200": {
+            "description": "Trạng thái Social Bot"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/social/bot/messages": {
+      "get": {
+        "operationId": "getRecentSocialBotMessages",
+        "summary": "Xem các tin nhắn gần đây mà Bot Client đã nhận",
+        "description": "Lấy danh sách tin nhắn gần đây từ các nhóm chat MXH mà Bot Client đang lắng nghe",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Danh sách tin nhắn gần đây"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/social/bot/send": {
+      "post": {
+        "operationId": "sendSocialBotMessage",
+        "summary": "Gửi tin nhắn từ Bot vào nhóm chat MXH",
+        "description": "Đẩy tin nhắn vào cuộc trò chuyện hoặc nhóm chat thông qua BotRouter MXH",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chatId": {
+                    "type": "number",
+                    "description": "ID cuộc trò chuyện (conversationId)"
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Nội dung tin nhắn muốn gửi"
+                  },
+                  "replyToId": {
+                    "type": "number",
+                    "description": "ID tin nhắn muốn reply (tùy chọn)"
+                  }
+                },
+                "required": [
+                  "chatId",
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tin nhắn đã gửi thành công"
+          }
+        }
+      }
+    },
+    "/api/activity/v1/social/bot/connect": {
+      "post": {
+        "operationId": "connectSocialBot",
+        "summary": "Kích hoạt kết nối Social Bot tới MXH Socket.IO",
+        "description": "Kết nối hoặc kết nối lại Social Bot tới MXH",
+        "responses": {
+          "200": {
+            "description": "Đã kích hoạt kết nối Social Bot"
+          }
+        }
+      }
     }
   }
 }

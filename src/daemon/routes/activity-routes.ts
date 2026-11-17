@@ -29,6 +29,7 @@ import {
 import { listWindows, takeScreenshot, mouseAction, keyboardAction, executeCuaTool, getCuaToolList } from "../desktop";
 import { invokeVpsSsh } from "../vps";
 import { dispatchBridgeTask, clearTaskQueue } from "../tools/task-bridge";
+import { getSocialBotStatus, sendSocialMessage, startSocialBot, stopSocialBot, getRecentChatMessages } from "../social-bot";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { assertSafePath } from "../security";
@@ -600,7 +601,60 @@ export async function handleActivityRoutes(
     try {
       const body: any = await req.json().catch(() => ({}));
       const res = clearTaskQueue(body.reason || "api_clear", handleMcpActivity);
-      return jsonResponse({ ok: true, ...res });
+      return jsonResponse({ ...res });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  // 7b. Social Task Mesh — Bot Client Endpoints
+  if (url.pathname === "/api/activity/v1/social/bot/status" && req.method === "GET") {
+    try {
+      const status = getSocialBotStatus();
+      return jsonResponse({ ok: true, ...status });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/bot/messages" && req.method === "GET") {
+    try {
+      const limit = parseInt(url.searchParams.get("limit") || "20");
+      const messages = getRecentChatMessages(limit);
+      return jsonResponse({ ok: true, count: messages.length, messages });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/bot/send" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (!body.chatId || !body.text) {
+        return errorResponse("Thiếu tham số 'chatId' hoặc 'text'", 400);
+      }
+      const res = await sendSocialMessage(body.chatId, body.text, body.replyToId);
+      return jsonResponse({ ok: !!res, data: res });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/bot/connect" && req.method === "POST") {
+    try {
+      const body: any = await req.json().catch(() => ({}));
+      startSocialBot(body);
+      const status = getSocialBotStatus();
+      return jsonResponse({ ok: true, message: "Social Bot connection triggered", ...status });
+    } catch (err: any) {
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  if (url.pathname === "/api/activity/v1/social/bot/disconnect" && req.method === "POST") {
+    try {
+      stopSocialBot();
+      return jsonResponse({ ok: true, message: "Social Bot disconnected" });
     } catch (err: any) {
       return errorResponse(err.message, 500);
     }

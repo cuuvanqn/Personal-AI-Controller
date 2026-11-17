@@ -6,6 +6,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as crypto from "node:crypto";
+import { EventEmitter } from "node:events";
 import { getDatabase } from "../db";
 import {
   getPlan,
@@ -54,6 +55,9 @@ export interface BridgeTaskItem {
 // In-memory queue & in-flight tracking
 const taskQueue: BridgeTaskItem[] = [];
 const inFlightTasks = new Map<string, BridgeTaskItem>();
+
+/** EventEmitter for Task Bridge lifecycle (dispatched, progress, completed) */
+export const taskBridgeEvents = new EventEmitter();
 
 export interface CompletedTaskRecord {
   taskId: string;
@@ -274,6 +278,7 @@ export async function dispatchBridgeTask(
   };
 
   taskQueue.push(item);
+  taskBridgeEvents.emit("task_dispatched", item);
 
   // Lưu trạng thái vào SQLite
   try {
@@ -507,6 +512,14 @@ export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any
         phase
       });
 
+      taskBridgeEvents.emit("task_progress", {
+        taskId,
+        task,
+        percent,
+        phase,
+        message,
+      });
+
       return { content: [{ type: "text" as const, text: "OK" }] };
     }
   );
@@ -656,6 +669,17 @@ export function registerTaskBridgeTools(mcp: McpServer, onActivity?: (event: any
       retryPrompt,
       nextTask,
       planDone,
+    });
+
+    taskBridgeEvents.emit("task_completed", {
+      taskId,
+      task,
+      status,
+      summary,
+      filesTouched,
+      verify,
+      planDone,
+      continuationPrompt,
     });
 
     return { content: [{ type: "text" as const, text: "OK" }] };

@@ -31,6 +31,8 @@ otter-storage.sqlite*
 *.so
 *.dylib
 
+MUSE_EXCHANGE.md
+
 
 .agents/
 

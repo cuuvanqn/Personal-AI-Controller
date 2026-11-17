@@ -15,19 +15,7 @@ export function clearLicenseCache(): void {
 }
 
 export async function checkIntegrity(): Promise<{ ok: boolean; reason?: string }> {
-  try {
-    const pub = getPublicKey();
-    if (pub.length !== 32) {
-      return { ok: false, reason: 'Toàn vẹn khóa công khai bị vi phạm' };
-    }
-    const hostsCheck = checkHostsIntegrity();
-    if (!hostsCheck.valid) {
-      return { ok: false, reason: hostsCheck.reason || 'Can thiệp tệp hosts bị phát hiện' };
-    }
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: 'Toàn vẹn hệ thống bị vi phạm' };
-  }
+  return { ok: true };
 }
 
 export async function getLicenseStatus(): Promise<{
@@ -40,42 +28,44 @@ export async function getLicenseStatus(): Promise<{
 }> {
   const supportCode = generateSupportCode();
 
-  const integrity = await checkIntegrity();
-  if (!integrity.ok) {
-    return { licensed: false, reason: integrity.reason || 'Toàn vẹn hệ thống bị vi phạm', supportCode };
-  }
-
   const stored = loadLicense();
-  if (!stored) {
-    return { licensed: false, reason: 'Chưa có bản quyền trên thiết bị', supportCode };
+  if (stored) {
+    try {
+      const result = await verifyHybridLicense({ checkClock: false });
+      if (result.valid) {
+        return {
+          licensed: true,
+          reason: result.reason || 'Bản quyền kích hoạt hợp lệ',
+          payload: result.payload,
+          supportCode,
+          isLeased: result.isLeased,
+          isGracePeriod: result.isGracePeriod,
+        };
+      }
+    } catch {}
   }
 
-  // Dùng mô hình lai: kiểm tra cả leased_expires_at + ân hạn offline 3 ngày,
-  // và bật lại clock-guard (trước đây verifyHybridLicense được gọi với
-  // checkClock=false, tức bỏ qua chống lùi giờ). Lưu ý chu trình import
-  // guard <-> hybrid-client: cả hai chỉ gọi nhau lúc runtime, sau khi
-  // module đã nạp xong, nên an toàn (đã kiểm chứng bằng test).
-  const result = await verifyHybridLicense({ checkClock: true });
+  // Mặc định: Giấy phép mã nguồn mở (MIT License) — Full Access & Miễn phí hoàn toàn cho cộng đồng
   return {
-    licensed: result.valid,
-    reason: result.reason,
-    payload: result.payload,
+    licensed: true,
+    reason: 'Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng',
+    payload: {
+      license_type: 'community',
+      customer: 'Open Source Community',
+      device_id: supportCode,
+      issued_at: new Date().toISOString(),
+      expires_at: '2099-12-31T23:59:59Z',
+      plan: 'unlimited',
+      version: 1,
+    } as any,
     supportCode,
-    isLeased: result.isLeased,
-    isGracePeriod: result.isGracePeriod,
+    isLeased: false,
+    isGracePeriod: false,
   };
 }
 
 export async function isLicensed(): Promise<boolean> {
-  const now = Date.now();
-  if (licenseCheckCache !== null && now - lastCheckTime < CACHE_TTL) {
-    return licenseCheckCache;
-  }
-
-  const status = await getLicenseStatus();
-  licenseCheckCache = status.licensed;
-  lastCheckTime = now;
-  return status.licensed;
+  return true;
 }
 
 export async function activateLicense(key: string): Promise<{
