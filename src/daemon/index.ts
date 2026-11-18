@@ -877,6 +877,20 @@ try {
   console.warn(`[!] Không thể tự khởi động Social Task Mesh Bot: ${err.message}`);
 }
 
+import { startTaskWorker } from "./mxh-task-worker";
+
+// Tự động khởi động A2A Task Worker (#20a) — tự nhận task MXH qua SSE
+// (chỉ chạy khi có MXH_BOT_TOKEN và MXH_AUTONOMOUS_WORKER=true)
+try {
+  const taskWorker = startTaskWorker();
+  if (taskWorker) {
+    const st = taskWorker.getStatus();
+    console.log(`[+] 🤖 MXH Task Worker (#20a): ĐÃ KÍCH HOẠT (SSE ${st.serverUrl}, bot @${st.botUsername})`);
+  }
+} catch (err: any) {
+  console.warn(`[!] Không thể tự khởi động MXH Task Worker: ${err.message}`);
+}
+
 import { startQuickTunnel } from "./tunnel";
 
 // Tunnel flags: GitHub default-on (--no-tunnel / NO_TUNNEL=true disables it).
