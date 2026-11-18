@@ -502,6 +502,102 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
           qualifiedName: "otter_core_mxh_files_edit",
           title: "Patch sửa đoạn mã trên Kho Chung MXH",
           description: "Sửa từng đoạn mã/văn bản (target -> replacement) trên Kho Tệp Chung MXH không cần gửi lại toàn bộ tệp."
+        },
+        {
+          name: "meta_cli_exec",
+          qualifiedName: "otter_core_meta_cli_exec",
+          title: "Gọi lệnh Meta CLI qua cầu nối RPC",
+          description: "Gọi 1 lệnh Meta CLI (facebook-cli, Messenger, Instagram, Threads, Meta Ads) qua Reverse RPC trên localhost. Dùng khi không có tool chuyên biệt."
+        },
+        {
+          name: "meta_fb_me",
+          qualifiedName: "otter_core_meta_fb_me",
+          title: "Xem tài khoản Facebook",
+          description: "Xem tài khoản Facebook đang đăng nhập (facebook-cli me)."
+        },
+        {
+          name: "meta_fb_feed",
+          qualifiedName: "otter_core_meta_fb_feed",
+          title: "Đọc bảng tin Facebook",
+          description: "Đọc bảng tin Facebook (newsfeed hoặc friends)."
+        },
+        {
+          name: "meta_fb_groups_search",
+          qualifiedName: "otter_core_meta_fb_groups_search",
+          title: "Tìm nhóm Facebook",
+          description: "Tìm nhóm Facebook theo từ khóa."
+        },
+        {
+          name: "meta_fb_post_create",
+          qualifiedName: "otter_core_meta_fb_post_create",
+          title: "Đăng bài lên trang cá nhân Facebook",
+          description: "Đăng 1 bài lên trang cá nhân Facebook (không đăng được lên nhóm)."
+        },
+        {
+          name: "meta_ig_accounts",
+          qualifiedName: "otter_core_meta_ig_accounts",
+          title: "Liệt kê tài khoản Instagram",
+          description: "Liệt kê tài khoản Instagram đã kết nối."
+        },
+        {
+          name: "meta_ig_posts",
+          qualifiedName: "otter_core_meta_ig_posts",
+          title: "Xem bài đăng Instagram",
+          description: "Xem bài đăng Instagram của 1 tài khoản."
+        },
+        {
+          name: "meta_ig_inbox",
+          qualifiedName: "otter_core_meta_ig_inbox",
+          title: "Đọc hộp thư Instagram",
+          description: "Đọc hộp thư Instagram (cần kết nối lại Instagram Messages nếu báo chưa kết nối)."
+        },
+        {
+          name: "meta_th_accounts",
+          qualifiedName: "otter_core_meta_th_accounts",
+          title: "Liệt kê tài khoản Threads",
+          description: "Liệt kê tài khoản Threads đã kết nối."
+        },
+        {
+          name: "meta_th_profile",
+          qualifiedName: "otter_core_meta_th_profile",
+          title: "Xem profile Threads",
+          description: "Xem profile Threads."
+        },
+        {
+          name: "meta_th_post",
+          qualifiedName: "otter_core_meta_th_post",
+          title: "Đăng bài lên Threads",
+          description: "Đăng 1 bài lên Threads."
+        },
+        {
+          name: "meta_ads_status",
+          qualifiedName: "otter_core_meta_ads_status",
+          title: "Kiểm tra kết nối Meta Ads",
+          description: "Kiểm tra kết nối Meta Ads."
+        },
+        {
+          name: "meta_ads_list_tools",
+          qualifiedName: "otter_core_meta_ads_list_tools",
+          title: "Liệt kê tool Meta Ads",
+          description: "Liệt kê các tool Meta Ads có sẵn."
+        },
+        {
+          name: "meta_ads_call_tool",
+          qualifiedName: "otter_core_meta_ads_call_tool",
+          title: "Gọi tool Meta Ads",
+          description: "Gọi 1 tool Meta Ads với tham số JSON."
+        },
+        {
+          name: "meta_msg_chats",
+          qualifiedName: "otter_core_meta_msg_chats",
+          title: "Liệt kê đoạn chat Messenger",
+          description: "Liệt kê đoạn chat Messenger (có thể lọc chưa đọc)."
+        },
+        {
+          name: "meta_msg_send",
+          qualifiedName: "otter_core_meta_msg_send",
+          title: "Gửi tin nhắn Messenger",
+          description: "Gửi 1 tin nhắn Messenger vào đoạn chat hoặc cho 1 người."
         }
       ];
 

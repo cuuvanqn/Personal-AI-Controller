@@ -28,7 +28,8 @@ import {
   registerFbMediaPostTools,
   registerGpmTools,
   registerSocialBotTools,
-  registerAntigravityCdpTools
+  registerAntigravityCdpTools,
+  registerMetaTools
 } from "./tools";
 
 /**
@@ -130,6 +131,10 @@ export function createMcpServer(onActivity?: (event: any) => void): McpServer {
 
   // 20. Antigravity IDE CDP Bridge — Điều khiển trực tiếp Antigravity qua Chrome DevTools Protocol
   registerAntigravityCdpTools(mcp, onActivity);
+
+  // 21. Meta Unified Toolset — gọi các cầu nối Meta CLI (fb, msg, ig, th, ads)
+  // qua Reverse RPC trên localhost (Phase #22/#23)
+  registerMetaTools(mcp, onActivity);
 
   return mcp;
 }
