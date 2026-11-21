@@ -135,7 +135,7 @@ sshCmd(`chown -R www-data:www-data ${REMOTE_DIR} && chmod -R u=rwX,go=rX ${REMOT
 console.log("\n[6/7] Cập nhật Backend Otter Monitor Server (/opt/otter-server)...");
 try {
   const srcArchive = path.join(LOCAL_DEPLOY, "src_bundle.tar.gz");
-  execSync(`tar -czf "${srcArchive}" src`, { stdio: "inherit" });
+  execSync(`tar -czf "${srcArchive}" src package.json`, { stdio: "inherit" });
   scpUpload(srcArchive, "/opt/otter-server/src_bundle.tar.gz");
   sshCmd("cd /opt/otter-server && tar -xzf src_bundle.tar.gz && rm src_bundle.tar.gz && systemctl restart otter-license.service");
   await fs.unlink(srcArchive).catch(() => {});

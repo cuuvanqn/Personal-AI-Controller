@@ -405,7 +405,7 @@ export default function Home() {
                       </Text>
                     </HStack>
                     <HStack gap={2} align="center">
-                      <Badge variant="success" label="MCP 2.2.2" />
+                      <Badge variant="success" label={`MCP ${__OTTER_VERSION__}`} />
                       <Badge variant="neutral" label="229 tools" />
                     </HStack>
                   </HStack>

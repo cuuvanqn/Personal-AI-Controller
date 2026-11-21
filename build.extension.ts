@@ -55,13 +55,28 @@ async function copyDir(src: string, dest: string) {
   }
 }
 
-// 3. Sao chép tài nguyên tĩnh sang dist
+// 3. Sao chép tài nguyên tĩnh sang dist (đồng bộ version từ root package.json vào manifest.json)
+const rootPkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
+const otterVersion = String(rootPkg.version || "2.0.0");
+
 const staticFiles = ["manifest.json", "options.html", "theme.css", "plan-overlay.css", "sidepanel.html", "sidepanel.css"];
 for (const file of staticFiles) {
   const src = path.join(extDir, file);
   const dest = path.join(distDir, file);
   try {
-    await fs.copyFile(src, dest);
+    if (file === "manifest.json") {
+      const manifest = JSON.parse(await fs.readFile(src, "utf8"));
+      if (manifest.version !== otterVersion) {
+        manifest.version = otterVersion;
+        const formatted = JSON.stringify(manifest, null, 2) + "\n";
+        await fs.writeFile(src, formatted, "utf8");
+        await fs.writeFile(dest, formatted, "utf8");
+      } else {
+        await fs.copyFile(src, dest);
+      }
+    } else {
+      await fs.copyFile(src, dest);
+    }
   } catch (err) {
     console.warn(`[!] Skipping missing static file: ${file}`);
   }

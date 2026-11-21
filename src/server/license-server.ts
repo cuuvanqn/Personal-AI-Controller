@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { allowLicenseRequest } from "../daemon/license/rate-limit";
+import { OTTER_VERSION } from "../daemon/version";
 import {
   verifyAdminAuth,
   verifyAdminFirebaseToken,
@@ -91,14 +92,16 @@ export function initLicenseDatabase(dbPath?: string): Database {
     if (!ext) {
       db.run(
         `INSERT INTO app_versions (component, version, min_supported_version, download_url, changelog, release_date, updated_at)
-         VALUES ('extension', '2.1.0', '2.0.0', 'https://otter.gpt.io.vn/otter-extension.zip', 'Tiện ích Chrome tùy chọn hỗ trợ thanh HUD trên ChatGPT Web', date('now'), datetime('now'))`
+         VALUES ('extension', ?, '2.0.0', 'https://otter.gpt.io.vn/otter-extension.zip', 'Tiện ích Chrome tùy chọn hỗ trợ thanh HUD trên ChatGPT Web', date('now'), datetime('now'))`,
+        [OTTER_VERSION]
       );
     }
     const daemon = db.query("SELECT component FROM app_versions WHERE component = 'daemon'").get();
     if (!daemon) {
       db.run(
         `INSERT INTO app_versions (component, version, min_supported_version, download_url, changelog, release_date, updated_at)
-         VALUES ('daemon', '2.1.0', '2.0.0', 'https://otter.gpt.io.vn/otter-windows-x64.exe', 'Otter Daemon v2.1.0: Dashboard nhúng sẵn, OAuth 2.1, CDP mặc định', date('now'), datetime('now'))`
+         VALUES ('daemon', ?, '2.0.0', 'https://otter.gpt.io.vn/otter-windows-x64.exe', ?, date('now'), datetime('now'))`,
+        [OTTER_VERSION, `Otter Daemon v${OTTER_VERSION}: Dashboard nhúng sẵn, OAuth 2.1, CDP mặc định`]
       );
     }
   } catch {}

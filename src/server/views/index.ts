@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Database } from "bun:sqlite";
 import { getTelemetryStats, listActiveUsers, listRecentDownloads } from "../license-server";
+import { OTTER_VERSION } from "../../daemon/version";
 
 let cachedLoginHtml: string | null = null;
 let cachedDashboardHtml: string | null = null;
@@ -63,8 +64,8 @@ export function renderAdminDashboard(db: Database, port: number, adminUser: stri
   try {
     versionsList = db.query("SELECT * FROM app_versions").all() as any[];
   } catch {}
-  const daemonVer = versionsList.find((v) => v.component === "daemon")?.version || "2.2.2";
-  const extVer = versionsList.find((v) => v.component === "extension")?.version || "2.2.2";
+  const daemonVer = versionsList.find((v) => v.component === "daemon")?.version || OTTER_VERSION;
+  const extVer = versionsList.find((v) => v.component === "extension")?.version || OTTER_VERSION;
 
   const initialPayload = JSON.stringify({
     stats,

@@ -1,6 +1,7 @@
+import pkg from "../../package.json";
+
 /**
- * Phiên bản hiện tại của Otter Daemon.
- * Đồng bộ thủ công với "version" trong package.json mỗi lần phát hành.
- * Dùng cho: MCP server info, kiểm tra cập nhật (updater.ts), Dashboard.
+ * Phiên bản duy nhất của Otter — đọc trực tiếp từ root package.json.
+ * Chỉ cần sửa "version" trong package.json là toàn bộ daemon, server, web và extension tự cập nhật.
  */
-export const OTTER_VERSION = "2.2.2";
+export const OTTER_VERSION: string = pkg.version;
