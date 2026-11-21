@@ -1,0 +1,17 @@
+import { chromium } from "playwright";
+const url = process.argv[2] || "http://127.0.0.1:4173/";
+const out = process.argv[3] || "/tmp/shot.png";
+const width = Number(process.argv[4] || 1440);
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+const browser = await chromium.launch(proxy ? { proxy: { server: proxy, bypass: "localhost,127.0.0.1" } } : {});
+const page = await browser.newPage({ viewport: { width, height: 900 } });
+const errors = [];
+page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+page.on("pageerror", (e) => errors.push(String(e)));
+await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+await page.waitForTimeout(1500);
+await page.screenshot({ path: out, fullPage: true });
+const title = await page.title();
+const h1 = await page.locator("h1").first().textContent().catch(() => null);
+console.log(JSON.stringify({ title, h1, errors: errors.slice(0, 8) }));
+await browser.close();
