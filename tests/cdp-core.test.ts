@@ -1,8 +1,168 @@
 import { describe, test, expect } from "bun:test";
-import { CdpBridge } from "../src/daemon/cdp-bridge";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { CdpBridge, readDefaultChromeActivePort } from "../src/daemon/cdp-bridge";
 import { OTTER_CORE_VERSION, isFacebookPostMismatch } from "../src/daemon/cdp-page-core";
 
 describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
+  test("readDefaultChromeActivePort parses valid, invalid, and missing DevToolsActivePort", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "otter-cdp-port-"));
+    try {
+      expect(readDefaultChromeActivePort(tmp)).toBeNull();
+
+      fs.writeFileSync(path.join(tmp, "DevToolsActivePort"), "not-a-port\n/devtools/browser/xyz\n");
+      expect(readDefaultChromeActivePort(tmp)).toBeNull();
+
+      fs.writeFileSync(path.join(tmp, "DevToolsActivePort"), "9333\n/devtools/browser/abc-123\n");
+      expect(readDefaultChromeActivePort(tmp)).toEqual({
+        port: 9333,
+        wsPath: "/devtools/browser/abc-123",
+        browserWsUrl: "ws://127.0.0.1:9333/devtools/browser/abc-123",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("DevToolsActivePort browser-level WS reuses 1 persistent socket with flatten session multiplexing", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "otter-cdp-bws-"));
+    let wsConnections = 0;
+    const seenMethods: Array<{ method: string; sessionId?: string }> = [];
+    let coreLoadedOnTab = false;
+
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        const url = new URL(req.url);
+        if (url.pathname === "/devtools/browser/mock-guid" && srv.upgrade(req)) {
+          return undefined;
+        }
+        return new Response("HTTP /json disabled on Chrome 144+", { status: 404 });
+      },
+      websocket: {
+        open() {
+          wsConnections++;
+        },
+        message(ws, raw) {
+          const msg = JSON.parse(String(raw));
+          seenMethods.push({ method: msg.method, sessionId: msg.sessionId });
+
+          if (msg.method === "Target.getTargets") {
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                result: {
+                  targetInfos: [
+                    { targetId: "T-FB", type: "page", title: "Facebook", url: "https://www.facebook.com/" },
+                    { targetId: "T-2", type: "page", title: "Docs", url: "https://example.com/" },
+                  ],
+                },
+              })
+            );
+            return;
+          }
+          if (msg.method === "Target.attachToTarget") {
+            ws.send(
+              JSON.stringify({
+                id: msg.id,
+                result: { sessionId: `S-${msg.params.targetId}` },
+              })
+            );
+            return;
+          }
+          if (msg.method === "Target.activateTarget" || msg.method === "Target.closeTarget") {
+            ws.send(JSON.stringify({ id: msg.id, result: { success: true } }));
+            return;
+          }
+          if (msg.method === "Page.enable" || msg.method === "Page.addScriptToEvaluateOnNewDocument" || msg.method === "Input.dispatchMouseEvent") {
+            ws.send(JSON.stringify({ id: msg.id, result: {} }));
+            return;
+          }
+          if (msg.method === "Runtime.evaluate") {
+            const expr: string = msg.params?.expression || "";
+            if (expr.includes("window.__otterCore.version ===")) {
+              ws.send(JSON.stringify({ id: msg.id, result: { result: { value: coreLoadedOnTab } } }));
+              return;
+            }
+            if (expr.includes("OTTER_CORE_VERSION") || expr.includes("window.__otterCore =")) {
+              coreLoadedOnTab = true;
+              ws.send(JSON.stringify({ id: msg.id, result: { result: { value: true } } }));
+              return;
+            }
+            if (expr.includes("window.__otterCore.readPage")) {
+              ws.send(
+                JSON.stringify({
+                  id: msg.id,
+                  result: {
+                    result: {
+                      value: { title: "Facebook", url: "https://www.facebook.com/", elementsCount: 42, elements: [] },
+                    },
+                  },
+                })
+              );
+              return;
+            }
+            if (expr.includes("window.__otterCore.prepClick")) {
+              ws.send(
+                JSON.stringify({
+                  id: msg.id,
+                  result: {
+                    result: { value: { ok: true, inViewport: true, x: 100, y: 200, tag: "button", text: "Like" } },
+                  },
+                })
+              );
+              return;
+            }
+            ws.send(JSON.stringify({ id: msg.id, result: { result: { value: { ok: true } } } }));
+          }
+        },
+      },
+    });
+
+    const bridge = new CdpBridge(59999, tmp);
+    try {
+      fs.writeFileSync(path.join(tmp, "DevToolsActivePort"), `${server.port}\n/devtools/browser/mock-guid\n`);
+
+      // 1. isAvailable() must use TCP probe ONLY (0 WebSocket connections -> no Chrome Allow popup!)
+      expect(await bridge.isAvailable()).toBe(true);
+      expect(wsConnections).toBe(0);
+
+      // 2. listTabs, readPage, click, switchTab, closeTab all share 1 persistent WebSocket!
+      const tabs = await bridge.listTabs();
+      expect(tabs.ok).toBe(true);
+      expect(tabs.tabs.length).toBe(2);
+
+      const page = await bridge.readPage("facebook.com");
+      expect(page.title).toBe("Facebook");
+      expect(page.elementsCount).toBe(42);
+      expect(page.tabId).toBe("T-FB");
+
+      const clicked = await bridge.click(1, "facebook.com");
+      expect(clicked.ok).toBe(true);
+      expect(clicked.message).toContain("isTrusted");
+
+      const switched = await bridge.switchTab("T-2");
+      expect(switched.ok).toBe(true);
+
+      const closed = await bridge.closeTab("T-2");
+      expect(closed.ok).toBe(true);
+
+      // Verify single persistent WebSocket & flattened sessionId multiplexing
+      expect(wsConnections).toBe(1);
+      expect(seenMethods.some((m) => m.method === "Target.attachToTarget" && !m.sessionId)).toBe(true);
+      expect(seenMethods.some((m) => m.method === "Page.addScriptToEvaluateOnNewDocument" && m.sessionId === "S-T-FB")).toBe(true);
+      expect(seenMethods.some((m) => m.method === "Input.dispatchMouseEvent" && m.sessionId === "S-T-FB")).toBe(true);
+      expect(seenMethods.some((m) => m.method === "Target.activateTarget")).toBe(true);
+      expect(seenMethods.some((m) => m.method === "Target.closeTarget")).toBe(true);
+    } finally {
+      bridge.close();
+      server.stop(true);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("isFacebookPostMismatch detects home/profile redirect vs real post URL", () => {
     expect(
       isFacebookPostMismatch("https://www.facebook.com/", "https://www.facebook.com/share/p/17tu5cAG8h/")

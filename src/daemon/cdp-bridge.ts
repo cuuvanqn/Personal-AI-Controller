@@ -13,9 +13,10 @@
  */
 
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { findChromeExecutable } from "./chrome-profile";
+import { findChromeExecutable, getChromeUserDataDir } from "./chrome-profile";
 import { getOtterDir } from "./db";
 import {
   OTTER_CORE_VERSION,
@@ -30,18 +31,269 @@ export interface CdpTab {
   type: string;
   webSocketDebuggerUrl?: string;
   devtoolsFrontendUrl?: string;
+  /** True khi tab đến từ Chrome 144+ DevToolsActivePort (browser-level WS + Target.attachToTarget) */
+  viaBrowserWs?: boolean;
+}
+
+export interface DevToolsActivePortInfo {
+  port: number;
+  wsPath: string;
+  browserWsUrl: string;
+}
+
+/**
+ * Đọc file DevToolsActivePort của Chrome mặc định (Chrome 144+ bật tại chrome://inspect/#remote-debugging).
+ */
+export function readDefaultChromeActivePort(userDataDir?: string): DevToolsActivePortInfo | null {
+  try {
+    const dir = getChromeUserDataDir(userDataDir);
+    const file = path.join(dir, "DevToolsActivePort");
+    if (!fs.existsSync(file)) return null;
+    const lines = fs
+      .readFileSync(file, "utf-8")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (lines.length < 2) return null;
+    const port = Number(lines[0]);
+    const wsPath = lines[1].startsWith("/") ? lines[1] : `/${lines[1]}`;
+    if (!Number.isFinite(port) || port <= 0) return null;
+    return {
+      port,
+      wsPath,
+      browserWsUrl: `ws://127.0.0.1:${port}${wsPath}`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 type CdpSendFn = (method: string, params?: any, timeoutMs?: number) => Promise<any>;
 
 export class CdpBridge {
   private defaultPort: number;
+  private defaultChromeUserDataDir?: string;
   private controlledTabId: string | null = null;
   private preloadedTabIds = new Set<string>();
   private spawnedChrome: ChildProcess | null = null;
 
-  constructor(defaultPort = 9222) {
+  // Kết nối Browser-level WebSocket bền vững cho Chrome 144+ mặc định (DevToolsActivePort)
+  // Giữ 1 kết nối duy nhất để người dùng chỉ phải bấm "Allow" 1 lần trong Chrome.
+  private browserWs: WebSocket | null = null;
+  private browserWsUrl: string | null = null;
+  private browserWsNextId = 1;
+  private browserWsPending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: any }>();
+  private browserWsConnectPromise: Promise<void> | null = null;
+  private attachedSessions = new Map<string, string>(); // targetId -> sessionId
+
+  constructor(defaultPort = 9222, defaultChromeUserDataDir?: string) {
     this.defaultPort = process.env.OTTER_CDP_PORT ? Number(process.env.OTTER_CDP_PORT) : defaultPort;
+    this.defaultChromeUserDataDir = defaultChromeUserDataDir;
+  }
+
+  private getPreferredDefaultChromeInfo(port?: number): DevToolsActivePortInfo | null {
+    if (port) return null;
+    if (process.env.OTTER_CDP_USE_DEFAULT_CHROME === "0") return null;
+    return readDefaultChromeActivePort(this.defaultChromeUserDataDir || process.env.OTTER_CHROME_USER_DATA_DIR);
+  }
+
+  private isTcpPortListening(port: number, timeoutMs = 400): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = net.createConnection({ host: "127.0.0.1", port });
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        try { socket.destroy(); } catch {}
+        resolve(ok);
+      };
+      socket.setTimeout(timeoutMs);
+      socket.once("connect", () => finish(true));
+      socket.once("timeout", () => finish(false));
+      socket.once("error", () => finish(false));
+    });
+  }
+
+  private async shouldUseBrowserWs(port?: number): Promise<boolean> {
+    const info = this.getPreferredDefaultChromeInfo(port);
+    if (!info) return false;
+    if (this.browserWs && this.browserWs.readyState === WebSocket.OPEN && this.browserWsUrl === info.browserWsUrl) {
+      return true;
+    }
+    return this.isTcpPortListening(info.port);
+  }
+
+  private isUsablePageTab(tab: CdpTab): boolean {
+    return tab.type === "page" && Boolean(tab.webSocketDebuggerUrl || tab.viaBrowserWs);
+  }
+
+  /**
+   * Đóng kết nối persistent Browser WebSocket (nếu có).
+   */
+  close(): void {
+    this.resetBrowserWs();
+  }
+
+  private resetBrowserWs(err?: Error): void {
+    if (this.browserWs) {
+      try { this.browserWs.close(); } catch {}
+    }
+    this.browserWs = null;
+    this.browserWsUrl = null;
+    this.browserWsConnectPromise = null;
+    this.attachedSessions.clear();
+    if (err) {
+      for (const [, p] of this.browserWsPending) {
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
+      this.browserWsPending.clear();
+    }
+  }
+
+  private async ensureBrowserWs(wsUrl: string, timeoutMs = 15000): Promise<void> {
+    if (this.browserWs && this.browserWs.readyState === WebSocket.OPEN && this.browserWsUrl === wsUrl) {
+      return;
+    }
+    if (this.browserWsConnectPromise && this.browserWsUrl === wsUrl) {
+      return this.browserWsConnectPromise;
+    }
+    this.resetBrowserWs();
+    this.browserWsUrl = wsUrl;
+
+    this.browserWsConnectPromise = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.resetBrowserWs();
+          reject(new Error("Kết nối Browser WebSocket Chrome mặc định quá hạn (hãy kiểm tra hộp thoại Allow trong Chrome)"));
+        }
+      }, timeoutMs);
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (err) {
+        clearTimeout(timer);
+        this.resetBrowserWs();
+        reject(err);
+        return;
+      }
+
+      ws.onopen = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          this.browserWs = ws;
+          this.browserWsConnectPromise = null;
+          resolve();
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(typeof event.data === "string" ? event.data : String(event.data));
+          if (data.id && this.browserWsPending.has(data.id)) {
+            const p = this.browserWsPending.get(data.id)!;
+            this.browserWsPending.delete(data.id);
+            clearTimeout(p.timer);
+            if (data.error) {
+              p.reject(new Error(`Lỗi CDP: ${data.error.message || JSON.stringify(data.error)}`));
+            } else {
+              p.resolve(data.result);
+            }
+          } else if (data.method === "Target.detachedFromTarget" && data.params?.targetId) {
+            this.attachedSessions.delete(data.params.targetId);
+            this.preloadedTabIds.delete(data.params.targetId);
+          }
+        } catch {}
+      };
+
+      ws.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          this.resetBrowserWs();
+          reject(new Error("Không thể kết nối Browser WebSocket của Chrome mặc định"));
+        }
+      };
+
+      ws.onclose = () => {
+        const closeErr = new Error("Browser WebSocket Chrome mặc định đã đóng");
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(closeErr);
+        }
+        this.resetBrowserWs(closeErr);
+      };
+    });
+
+    return this.browserWsConnectPromise;
+  }
+
+  private async sendOnBrowserWs(method: string, params: any = {}, sessionId?: string, timeoutMs = 25000): Promise<any> {
+    const info = this.getPreferredDefaultChromeInfo();
+    const targetWsUrl = this.browserWsUrl || info?.browserWsUrl;
+    if (!targetWsUrl) throw new Error("Không tìm thấy Browser WebSocket của Chrome mặc định");
+    await this.ensureBrowserWs(targetWsUrl);
+    if (!this.browserWs || this.browserWs.readyState !== WebSocket.OPEN) {
+      throw new Error("Browser WebSocket chưa sẵn sàng");
+    }
+
+    return new Promise((resolve, reject) => {
+      const id = this.browserWsNextId++;
+      const timer = setTimeout(() => {
+        this.browserWsPending.delete(id);
+        reject(new Error(`Lệnh CDP '${method}' quá hạn sau ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+      this.browserWsPending.set(id, { resolve, reject, timer });
+      try {
+        const payload: any = { id, method, params };
+        if (sessionId) payload.sessionId = sessionId;
+        this.browserWs!.send(JSON.stringify(payload));
+      } catch (err) {
+        clearTimeout(timer);
+        this.browserWsPending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  private async attachTargetSession(targetId: string): Promise<string> {
+    const existing = this.attachedSessions.get(targetId);
+    if (existing) return existing;
+    const res = await this.sendOnBrowserWs("Target.attachToTarget", { targetId, flatten: true }, undefined, 10000);
+    const sessionId = res?.sessionId;
+    if (!sessionId) throw new Error(`Không thể gắn vào tab ${targetId}`);
+    this.attachedSessions.set(targetId, sessionId);
+    return sessionId;
+  }
+
+  /**
+   * Thực thi chuỗi lệnh trên 1 tab cụ thể (tự động dùng persistent Browser WS nếu là Chrome 144+ mặc định,
+   * hoặc tab WebSocket chuẩn nếu là cổng 9222 / GPM Login).
+   */
+  async withTabSession<T>(tab: CdpTab, fn: (send: CdpSendFn) => Promise<T>, defaultTimeoutMs = 25000): Promise<T> {
+    if (tab.viaBrowserWs) {
+      const sessionId = await this.attachTargetSession(tab.id);
+      const send: CdpSendFn = (method, params = {}, timeoutMs = defaultTimeoutMs) =>
+        this.sendOnBrowserWs(method, params, sessionId, timeoutMs);
+      try {
+        return await fn(send);
+      } catch (err: any) {
+        // Nếu session cũ bị detach (tab vừa đóng/reload), xóa cache để lần sau attach lại
+        if (String(err?.message || "").includes("Session with given id not found")) {
+          this.attachedSessions.delete(tab.id);
+        }
+        throw err;
+      }
+    }
+    if (!tab.webSocketDebuggerUrl) {
+      throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    }
+    return this.withSession(tab.webSocketDebuggerUrl, fn, defaultTimeoutMs);
   }
 
   getPort(): number {
@@ -54,8 +306,11 @@ export class CdpBridge {
 
   /**
    * Kiểm tra xem cổng CDP có đang mở và sẵn sàng không
+   * (Ưu tiên Chrome 144+ mặc định qua DevToolsActivePort nếu đang bật, dùng TCP probe để không gây popup).
    */
   async isAvailable(port?: number, _profileId?: string): Promise<boolean> {
+    if (await this.shouldUseBrowserWs(port)) return true;
+
     const targetPort = port || this.defaultPort;
     try {
       const res = await fetch(`http://127.0.0.1:${targetPort}/json/version`, {
@@ -148,6 +403,22 @@ export class CdpBridge {
    * Lấy danh sách tất cả các tab đang mở
    */
   async getTabs(port?: number): Promise<CdpTab[]> {
+    if (await this.shouldUseBrowserWs(port)) {
+      try {
+        const res = await this.sendOnBrowserWs("Target.getTargets", {}, undefined, 15000);
+        const infos = Array.isArray(res?.targetInfos) ? res.targetInfos : [];
+        return infos.map((t: any) => ({
+          id: String(t.targetId || ""),
+          title: String(t.title || ""),
+          url: String(t.url || ""),
+          type: String(t.type || "other"),
+          viaBrowserWs: true,
+        }));
+      } catch (err: any) {
+        console.warn(`[CDP Bridge] Không đọc được tab từ Chrome mặc định (${err.message}), thử cổng dự phòng...`);
+      }
+    }
+
     const targetPort = port || this.defaultPort;
     if (!(await this.isAvailable(targetPort))) {
       await this.ensureProfileRunning(undefined, targetPort);
@@ -164,7 +435,7 @@ export class CdpBridge {
    */
   async findTargetTab(urlPattern?: string, port?: number): Promise<CdpTab> {
     const tabs = await this.getTabs(port);
-    const pageTabs = tabs.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+    const pageTabs = tabs.filter((t) => this.isUsablePageTab(t));
 
     if (pageTabs.length === 0) {
       throw new Error("Không tìm thấy tab trang web (type=page) nào đang mở trong trình duyệt CDP.");
@@ -346,11 +617,11 @@ export class CdpBridge {
   async preloadCoreOnAllTabs(port?: number): Promise<number> {
     try {
       const tabs = await this.getTabs(port);
-      const pageTabs = tabs.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+      const pageTabs = tabs.filter((t) => this.isUsablePageTab(t));
       let count = 0;
       for (const tab of pageTabs) {
         try {
-          await this.withSession(tab.webSocketDebuggerUrl!, async (send) => {
+          await this.withTabSession(tab, async (send) => {
             await this.ensureCoreInSession(send, tab.id);
           });
           count++;
@@ -363,17 +634,43 @@ export class CdpBridge {
   }
 
   /**
-   * Chờ trang hoàn tất tải (document.readyState === 'complete' hoặc 'interactive')
+   * Chờ trang hoàn tất tải (document.readyState === 'complete')
    */
-  private async waitForPageReady(wsUrl: string, timeoutMs = 12000): Promise<void> {
+  private async waitForPageReady(tab: CdpTab, timeoutMs = 12000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    try {
+      await this.withTabSession(tab, async (send) => {
+        while (Date.now() < deadline) {
+          try {
+            const state = await this.evalInSession(send, "document.readyState", false, 2000);
+            if (state === "complete") return;
+          } catch {}
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }, timeoutMs + 2000);
+    } catch {}
+  }
+
+  private async createTab(url: string, port?: number): Promise<CdpTab> {
+    if (await this.shouldUseBrowserWs(port)) {
       try {
-        const state = await this.evaluateJs(wsUrl, "document.readyState", false, 2000);
-        if (state === "complete") return;
+        const res = await this.sendOnBrowserWs("Target.createTarget", { url }, undefined, 10000);
+        if (res?.targetId) {
+          return {
+            id: String(res.targetId),
+            title: "",
+            url,
+            type: "page",
+            viaBrowserWs: true,
+          };
+        }
       } catch {}
-      await new Promise((r) => setTimeout(r, 300));
     }
+    const targetPort = port || this.defaultPort;
+    const newTabRes = await fetch(`http://127.0.0.1:${targetPort}/json/new?${encodeURIComponent(url)}`, {
+      method: "PUT",
+    });
+    return (await newTabRes.json()) as CdpTab;
   }
 
   private shouldAutoHud(): boolean {
@@ -394,22 +691,21 @@ export class CdpBridge {
       targetUrl = "https://" + targetUrl;
     }
 
-    const targetPort = port || this.defaultPort;
     let targetTab: CdpTab | null = null;
     try {
-      targetTab = await this.findTargetTab(undefined, targetPort);
+      targetTab = await this.findTargetTab(undefined, port);
     } catch {}
 
-    if (targetTab && targetTab.webSocketDebuggerUrl) {
+    if (targetTab && this.isUsablePageTab(targetTab)) {
       this.controlledTabId = targetTab.id;
-      await this.withSession(targetTab.webSocketDebuggerUrl, async (send) => {
+      await this.withTabSession(targetTab, async (send) => {
         await this.ensureCoreInSession(send, targetTab!.id);
         await send("Page.navigate", { url: targetUrl });
       });
-      await this.waitForPageReady(targetTab.webSocketDebuggerUrl, 10000);
+      await this.waitForPageReady(targetTab, 10000);
       await new Promise((r) => setTimeout(r, 400));
 
-      const meta = await this.withSession(targetTab.webSocketDebuggerUrl, async (send) => {
+      const meta = await this.withTabSession(targetTab, async (send) => {
         await this.ensureCoreInSession(send, targetTab!.id);
         if (this.shouldAutoHud()) {
           await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
@@ -425,14 +721,11 @@ export class CdpBridge {
       };
     }
 
-    const newTabRes = await fetch(`http://127.0.0.1:${targetPort}/json/new?${encodeURIComponent(targetUrl)}`, {
-      method: "PUT",
-    });
-    const newTab = (await newTabRes.json()) as CdpTab;
+    const newTab = await this.createTab(targetUrl, port);
     this.controlledTabId = newTab.id;
-    if (newTab.webSocketDebuggerUrl) {
-      await this.waitForPageReady(newTab.webSocketDebuggerUrl, 10000);
-      await this.withSession(newTab.webSocketDebuggerUrl, async (send) => {
+    if (this.isUsablePageTab(newTab)) {
+      await this.waitForPageReady(newTab, 10000);
+      await this.withTabSession(newTab, async (send) => {
         await this.ensureCoreInSession(send, newTab.id);
         if (this.shouldAutoHud()) {
           await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
@@ -452,9 +745,8 @@ export class CdpBridge {
    */
   async readPage(urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    const res = await this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       if (this.shouldAutoHud()) {
         await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
@@ -477,9 +769,8 @@ export class CdpBridge {
    */
   async click(index: number, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       const prep = await this.evalInSession(send, `window.__otterCore.prepClick(${Number(index)})`, false, 8000);
       if (!prep?.ok) {
@@ -530,9 +821,8 @@ export class CdpBridge {
     port?: number
   ): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       const res = await this.evalInSession(
         send,
@@ -567,9 +857,8 @@ export class CdpBridge {
 
   async select(index: number, option: string, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       const res = await this.evalInSession(
         send,
@@ -584,9 +873,8 @@ export class CdpBridge {
 
   async scroll(direction: "up" | "down", amount = 800, urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(
         send,
@@ -599,8 +887,7 @@ export class CdpBridge {
 
   async back(urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    await this.evaluateJs(tab.webSocketDebuggerUrl, "window.history.back()", false);
+    await this.withTabSession(tab, (send) => this.evalInSession(send, "window.history.back()", false, 5000));
     return { ok: true, message: "Đã quay lại trang trước qua CDP" };
   }
 
@@ -619,32 +906,52 @@ export class CdpBridge {
   }
 
   async closeTab(tabId?: string | number, port?: number): Promise<{ ok: boolean; message: string }> {
-    const targetPort = port || this.defaultPort;
-    const targetId = tabId ? String(tabId) : (await this.findTargetTab(undefined, targetPort)).id;
-    const res = await fetch(`http://127.0.0.1:${targetPort}/json/close/${targetId}`, { method: "PUT" });
+    const targetId = tabId ? String(tabId) : (await this.findTargetTab(undefined, port)).id;
+    let ok = false;
+    if (await this.shouldUseBrowserWs(port)) {
+      try {
+        const res = await this.sendOnBrowserWs("Target.closeTarget", { targetId }, undefined, 8000);
+        ok = res?.success !== false;
+        this.attachedSessions.delete(targetId);
+      } catch {}
+    }
+    if (!ok) {
+      const targetPort = port || this.defaultPort;
+      const res = await fetch(`http://127.0.0.1:${targetPort}/json/close/${targetId}`, { method: "PUT" });
+      ok = res.ok;
+    }
     this.preloadedTabIds.delete(targetId);
     if (this.controlledTabId === targetId) this.controlledTabId = null;
     return {
-      ok: res.ok,
-      message: res.ok ? `Đã đóng tab [${targetId}] qua CDP thành công` : `Không thể đóng tab [${targetId}] qua CDP`,
+      ok,
+      message: ok ? `Đã đóng tab [${targetId}] qua CDP thành công` : `Không thể đóng tab [${targetId}] qua CDP`,
     };
   }
 
   async switchTab(tabId: string | number, port?: number): Promise<{ ok: boolean; message: string }> {
-    const targetPort = port || this.defaultPort;
     const idStr = String(tabId);
-    const res = await fetch(`http://127.0.0.1:${targetPort}/json/activate/${idStr}`, { method: "PUT" });
-    if (res.ok) this.controlledTabId = idStr;
+    let ok = false;
+    if (await this.shouldUseBrowserWs(port)) {
+      try {
+        await this.sendOnBrowserWs("Target.activateTarget", { targetId: idStr }, undefined, 8000);
+        ok = true;
+      } catch {}
+    }
+    if (!ok) {
+      const targetPort = port || this.defaultPort;
+      const res = await fetch(`http://127.0.0.1:${targetPort}/json/activate/${idStr}`, { method: "PUT" });
+      ok = res.ok;
+    }
+    if (ok) this.controlledTabId = idStr;
     return {
-      ok: res.ok,
-      message: res.ok ? `Đã kích hoạt tab [${idStr}] qua CDP thành công` : `Không thể kích hoạt tab [${idStr}] qua CDP`,
+      ok,
+      message: ok ? `Đã kích hoạt tab [${idStr}] qua CDP thành công` : `Không thể kích hoạt tab [${idStr}] qua CDP`,
     };
   }
 
   async closeMessengerDocks(port?: number): Promise<any> {
     const tab = await this.findTargetTab("facebook.com", port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 8000);
     });
@@ -657,9 +964,8 @@ export class CdpBridge {
       await new Promise((r) => setTimeout(r, 1500));
       tab = await this.findTargetTab("facebook.com", port);
     }
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    const res = await this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(
         send,
@@ -674,8 +980,7 @@ export class CdpBridge {
 
   async readFeed(port?: number): Promise<any> {
     const tab = await this.findTargetTab("facebook.com", port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    const res = await this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(send, "window.__otterCore.readFeed()", false, 15000);
     });
@@ -690,8 +995,7 @@ export class CdpBridge {
     port?: number
   ): Promise<any> {
     const tab = await this.findTargetTab("facebook.com", port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(
         send,
@@ -707,8 +1011,7 @@ export class CdpBridge {
     port?: number
   ): Promise<any> {
     const tab = await this.findTargetTab("facebook.com", port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(
         send,
@@ -729,9 +1032,8 @@ export class CdpBridge {
       await new Promise((r) => setTimeout(r, 2000));
       tab = await this.findTargetTab("facebook.com", port);
     }
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab!.id);
       await this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 5000).catch(() => {});
       const openRes = await this.evalInSession(send, "window.__otterCore.openFbComposer(false)", true, 15000);
@@ -768,12 +1070,11 @@ export class CdpBridge {
       await new Promise((r) => setTimeout(r, 2000));
       tab = await this.findTargetTab("facebook.com", port);
     }
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
     const resolvedMedia = params.mediaPath ? path.resolve(params.mediaPath) : "";
     const hasMedia = Boolean(resolvedMedia && fs.existsSync(resolvedMedia));
 
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab!.id);
       await this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 5000).catch(() => {});
 
@@ -818,31 +1119,26 @@ export class CdpBridge {
     options?: { newThread?: boolean; timeoutMs?: number; closeTabOnDone?: boolean },
     port?: number
   ): Promise<{ ok: boolean; replyText: string; attachments: any[]; tabId?: string; error?: string }> {
-    const targetPort = port || this.defaultPort;
     const timeout = options?.timeoutMs || 180000;
     const deadline = Date.now() + timeout;
 
-    const tabs = await this.getTabs(targetPort);
-    let museTab = tabs.find((t) => t.type === "page" && t.url?.includes("muse.ai") && t.webSocketDebuggerUrl);
+    const tabs = await this.getTabs(port);
+    let museTab = tabs.find((t) => this.isUsablePageTab(t) && t.url?.includes("muse.ai"));
     let created = false;
 
     if (!museTab) {
-      const r = await fetch(`http://127.0.0.1:${targetPort}/json/new?${encodeURIComponent("https://muse.ai/thread/new")}`, {
-        method: "PUT",
-      });
-      museTab = (await r.json()) as CdpTab;
+      museTab = await this.createTab("https://muse.ai/thread/new", port);
       created = true;
-      if (museTab.webSocketDebuggerUrl) await this.waitForPageReady(museTab.webSocketDebuggerUrl, 15000);
-    } else if (options?.newThread && museTab.webSocketDebuggerUrl) {
-      await this.sendCommand(museTab.webSocketDebuggerUrl, "Page.navigate", { url: "https://muse.ai/thread/new" });
-      await this.waitForPageReady(museTab.webSocketDebuggerUrl, 15000);
+      if (this.isUsablePageTab(museTab)) await this.waitForPageReady(museTab, 15000);
+    } else if (options?.newThread) {
+      await this.withTabSession(museTab, (send) => send("Page.navigate", { url: "https://muse.ai/thread/new" }));
+      await this.waitForPageReady(museTab, 15000);
     }
 
-    if (!museTab?.webSocketDebuggerUrl) {
+    if (!museTab || !this.isUsablePageTab(museTab)) {
       return { ok: false, replyText: "", attachments: [], error: "Không thể mở tab muse.ai qua CDP" };
     }
 
-    const wsUrl = museTab.webSocketDebuggerUrl;
     const tabId = museTab.id;
 
     try {
@@ -850,7 +1146,7 @@ export class CdpBridge {
       const readyDeadline = Date.now() + 25000;
       let ready = false;
       while (Date.now() < readyDeadline) {
-        const status = await this.withSession(wsUrl, async (send) => {
+        const status = await this.withTabSession(museTab, async (send) => {
           await this.ensureCoreInSession(send, tabId);
           return this.evalInSession(send, "window.__otterCore.museCheckReady()", false, 5000);
         });
@@ -865,7 +1161,7 @@ export class CdpBridge {
       }
       if (!ready) return { ok: false, replyText: "", attachments: [], error: "Trang Muse chưa sẵn sàng sau 25s." };
 
-      const sendRes = await this.withSession(wsUrl, async (send) => {
+      const sendRes = await this.withTabSession(museTab, async (send) => {
         await this.ensureCoreInSession(send, tabId);
         return this.evalInSession(send, `window.__otterCore.museSend(${JSON.stringify(task)})`, true, 10000);
       });
@@ -878,7 +1174,7 @@ export class CdpBridge {
 
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 1000));
-        const state = await this.withSession(wsUrl, async (send) => {
+        const state = await this.withTabSession(museTab, async (send) => {
           await this.ensureCoreInSession(send, tabId);
           return this.evalInSession(send, "window.__otterCore.musePoll()", false, 8000);
         }).catch(() => null);
@@ -896,7 +1192,7 @@ export class CdpBridge {
               const finalAtts = state.attachments || [];
               for (const a of finalAtts) {
                 if (!a.url) continue;
-                const extracted = await this.withSession(wsUrl, async (send) => {
+                const extracted = await this.withTabSession(museTab, async (send) => {
                   await this.ensureCoreInSession(send, tabId);
                   return this.evalInSession(send, `window.__otterCore.museExtractBlob(${JSON.stringify(a.url)})`, true, 30000);
                 }).catch(() => null);
@@ -917,7 +1213,7 @@ export class CdpBridge {
       return { ok: false, replyText: lastText, attachments: [], error: `Quá thời gian chờ (${Math.round(timeout / 1000)}s) phản hồi từ Muse.` };
     } finally {
       if (options?.closeTabOnDone && created) {
-        await this.closeTab(tabId, targetPort).catch(() => {});
+        await this.closeTab(tabId, port).catch(() => {});
       }
     }
   }
@@ -927,8 +1223,7 @@ export class CdpBridge {
    */
   async injectHud(toggle = false, urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(send, `window.__otterCore.injectHud(${Boolean(toggle)})`, false, 6000);
     });
@@ -939,8 +1234,7 @@ export class CdpBridge {
    */
   async evaluateOnTab(script: string, urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       const value = await this.evalInSession(send, script, true, 25000);
       return { ok: true, result: value, tabId: tab.id };
@@ -952,16 +1246,15 @@ export class CdpBridge {
    */
   async benchmark(rounds = 3, port?: number): Promise<{ available: boolean; averageLatencyMs: number; error?: string }> {
     const targetPort = port || this.defaultPort;
-    if (!(await this.isAvailable(targetPort))) {
+    if (!(await this.isAvailable(port))) {
       return { available: false, averageLatencyMs: -1, error: `Cổng CDP ${targetPort} không phản hồi` };
     }
 
     try {
-      const tab = await this.findTargetTab(undefined, targetPort);
-      if (!tab.webSocketDebuggerUrl) return { available: false, averageLatencyMs: -1, error: "Không có WebSocket URL" };
+      const tab = await this.findTargetTab(undefined, port);
 
       const latencies: number[] = [];
-      await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.withTabSession(tab, async (send) => {
         await this.ensureCoreInSession(send, tab.id);
         for (let i = 0; i < rounds; i++) {
           const start = performance.now();
@@ -982,9 +1275,8 @@ export class CdpBridge {
    */
   async injectChatMessage(text: string, autoSubmit = true, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab("chatgpt.com", port);
-    if (!tab.webSocketDebuggerUrl) throw new Error("Tab ChatGPT không có webSocketDebuggerUrl hợp lệ");
 
-    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+    const res = await this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
       return this.evalInSession(
         send,
@@ -1006,11 +1298,11 @@ export class CdpBridge {
    * Đảm bảo có Chrome mở cổng CDP và tự động nạp sẵn Otter Core vào tất cả tab ngay khi load!
    */
   async ensureCdpChrome(port?: number): Promise<boolean> {
-    const targetPort = port || this.defaultPort;
-    if (await this.isAvailable(targetPort)) {
-      void this.preloadCoreOnAllTabs(targetPort);
+    if (await this.isAvailable(port)) {
+      void this.preloadCoreOnAllTabs(port);
       return true;
     }
+    const targetPort = port || this.defaultPort;
     if (await this.ensureProfileRunning(undefined, targetPort)) {
       void this.preloadCoreOnAllTabs(targetPort);
       return true;
