@@ -1,11 +1,15 @@
 /**
- * Otter CDP Bridge (Chrome DevTools Protocol)
- * 
- * Động cơ điều khiển trình duyệt trực tiếp qua CDP (Port 9222 / GPM Login / Chrome Remote Debugging):
- * - Không phụ thuộc vào Chrome Extension hay Service Worker Manifest V3.
- * - Chạy trực tiếp qua WebSocket của Chromium C++ Core.
- * - Tương thích 100% với profile trình duyệt thật (GPM Login, Antidetect, Chrome User Data).
- * - Cung cấp chuẩn dữ liệu { title, url, tabId, elements, elementsCount, summaryText } đồng nhất với BrowserController.
+ * Otter CDP Bridge × Extension Page-Agent Core
+ *
+ * Kết hợp toàn bộ lõi điều khiển trang mạnh mẽ của Chrome Extension (Alibaba Page-Agent DOM,
+ * Shadow DOM + iframe, React/Lexical typing, W3C Pointer click, Facebook Feed/Comments/Messenger,
+ * Group/Media Post, Muse AI, Visual Activation HUD) trực tiếp vào Chrome DevTools Protocol (CDP):
+ * - Tự động nạp `window.__otterCore` ngay khi CDP mở/kết nối tab (qua Page.addScriptToEvaluateOnNewDocument)
+ *   -> Không cần cài Chrome Extension!
+ * - Kết hợp sức mạnh phần cứng chỉ CDP mới có:
+ *   1. `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` (sự kiện thật `isTrusted: true`)
+ *   2. `DOM.setFileInputFiles` (tải ảnh/video trực tiếp từ ổ đĩa, không cần Base64)
+ *   3. Chạy được cả Chrome desktop (có HUD trực quan) lẫn headless trên VPS Linux.
  */
 
 import * as fs from "node:fs";
@@ -13,6 +17,11 @@ import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { findChromeExecutable } from "./chrome-profile";
 import { getOtterDir } from "./db";
+import {
+  OTTER_CORE_VERSION,
+  OTTER_PAGE_CORE_SCRIPT,
+  isFacebookPostMismatch,
+} from "./cdp-page-core";
 
 export interface CdpTab {
   id: string;
@@ -23,23 +32,22 @@ export interface CdpTab {
   devtoolsFrontendUrl?: string;
 }
 
+type CdpSendFn = (method: string, params?: any, timeoutMs?: number) => Promise<any>;
+
 export class CdpBridge {
   private defaultPort: number;
+  private controlledTabId: string | null = null;
+  private preloadedTabIds = new Set<string>();
+  private spawnedChrome: ChildProcess | null = null;
 
   constructor(defaultPort = 9222) {
     this.defaultPort = process.env.OTTER_CDP_PORT ? Number(process.env.OTTER_CDP_PORT) : defaultPort;
   }
 
-  /**
-   * Cổng CDP hiện tại
-   */
   getPort(): number {
     return this.defaultPort;
   }
 
-  /**
-   * Đặt cổng CDP tùy chỉnh
-   */
   setPort(port: number): void {
     this.defaultPort = port;
   }
@@ -47,22 +55,20 @@ export class CdpBridge {
   /**
    * Kiểm tra xem cổng CDP có đang mở và sẵn sàng không
    */
-  async isAvailable(port?: number, profileId?: string): Promise<boolean> {
+  async isAvailable(port?: number, _profileId?: string): Promise<boolean> {
     const targetPort = port || this.defaultPort;
     try {
       const res = await fetch(`http://127.0.0.1:${targetPort}/json/version`, {
-        signal: AbortSignal.timeout(1000)
+        signal: AbortSignal.timeout(1000),
       });
       if (res.ok) return true;
     } catch {}
 
-    // Nếu người dùng không chỉ định cổng cụ thể, thử các cổng ứng viên và tự động dò profile GPM
     if (!port) {
-      // 1. Kiểm tra các cổng ứng viên thông dụng
       const candidatePorts = [
         process.env.OTTER_CDP_PORT ? Number(process.env.OTTER_CDP_PORT) : null,
         Number(process.env.CDP_PORT) || null,
-        32934
+        32934,
       ].filter(Boolean) as number[];
 
       for (const p of candidatePorts) {
@@ -76,27 +82,29 @@ export class CdpBridge {
         } catch {}
       }
 
-      // 2. Thử lấy port từ GPM Login Profile đang mở (dò tự động tất cả profile đang hoạt động)
+      // Thử dò cổng từ GPM Login Profile đang mở
       try {
         const gpmPort = process.env.OTTER_GPM_PORT ? Number(process.env.OTTER_GPM_PORT) : 9495;
         const profRes = await fetch(`http://127.0.0.1:${gpmPort}/api/v1/profiles?page=1&page_size=20`, {
-          signal: AbortSignal.timeout(1500)
+          signal: AbortSignal.timeout(1500),
         });
         if (profRes.ok) {
-          const profData = await profRes.json() as any;
+          const profData = (await profRes.json()) as any;
           const profiles = profData?.data?.data || profData?.data || [];
           for (const p of profiles) {
             try {
               const startRes = await fetch(`http://127.0.0.1:${gpmPort}/api/v1/profiles/start/${p.id}`, {
-                signal: AbortSignal.timeout(1000)
+                signal: AbortSignal.timeout(1000),
               });
               if (startRes.ok) {
-                const sData = await startRes.json() as any;
+                const sData = (await startRes.json()) as any;
                 const testPort = Number(sData.data?.remote_debugging_port);
                 if (testPort) {
-                  const testRes = await fetch(`http://127.0.0.1:${testPort}/json/version`, { signal: AbortSignal.timeout(800) });
+                  const testRes = await fetch(`http://127.0.0.1:${testPort}/json/version`, {
+                    signal: AbortSignal.timeout(800),
+                  });
                   if (testRes.ok) {
-                    console.log(`[CDP Bridge] 🎯 Đã tự động phát hiện cổng CDP từ GPM Profile "${p.name}" (${p.id}): Port ${testPort}`);
+                    console.log(`[CDP Bridge] Tự phát hiện cổng CDP từ GPM Profile "${p.name}": Port ${testPort}`);
                     this.defaultPort = testPort;
                     return true;
                   }
@@ -112,7 +120,7 @@ export class CdpBridge {
   }
 
   /**
-   * Tự động khởi động đúng profile GPM Login nếu cổng CDP chưa mở
+   * Tự động khởi động profile GPM Login nếu cổng CDP chưa mở
    */
   async ensureProfileRunning(profileId?: string, port?: number): Promise<boolean> {
     const targetPort = port || this.defaultPort;
@@ -122,18 +130,16 @@ export class CdpBridge {
     const gpmPort = process.env.OTTER_GPM_PORT ? Number(process.env.OTTER_GPM_PORT) : 9495;
 
     try {
-      console.log(`[CDP Bridge] Cổng ${targetPort} chưa mở. Đang tự động gọi GPM Login API để khởi động profile ${targetProfile}...`);
-      const res = await fetch(`http://127.0.0.1:${gpmPort}/api/v1/profiles/start/${targetProfile}?remote_debugging_port=${targetPort}`, {
-        signal: AbortSignal.timeout(12000)
-      });
-      const data = await res.json() as any;
+      const res = await fetch(
+        `http://127.0.0.1:${gpmPort}/api/v1/profiles/start/${targetProfile}?remote_debugging_port=${targetPort}`,
+        { signal: AbortSignal.timeout(12000) }
+      );
+      const data = (await res.json()) as any;
       if (data.success || data.message === "ProfileInUse") {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 2000));
         return await this.isAvailable(targetPort);
       }
-    } catch (err: any) {
-      console.warn(`[CDP Bridge] Không thể tự động bật profile qua GPM API: ${err.message}`);
-    }
+    } catch {}
 
     return false;
   }
@@ -147,112 +153,244 @@ export class CdpBridge {
       await this.ensureProfileRunning(undefined, targetPort);
     }
     const res = await fetch(`http://127.0.0.1:${targetPort}/json`, {
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) throw new Error(`Không thể lấy danh sách tab từ CDP port ${targetPort}`);
     return (await res.json()) as CdpTab[];
   }
 
   /**
-   * Tìm tab phù hợp (ưu tiên theo urlPattern hoặc tab page đầu tiên)
+   * Tìm tab mục tiêu: ưu tiên urlPattern -> controlledTabId -> tab page đầu tiên
    */
   async findTargetTab(urlPattern?: string, port?: number): Promise<CdpTab> {
     const tabs = await this.getTabs(port);
-    const pageTabs = tabs.filter(t => t.type === "page" && t.webSocketDebuggerUrl);
+    const pageTabs = tabs.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
 
     if (pageTabs.length === 0) {
       throw new Error("Không tìm thấy tab trang web (type=page) nào đang mở trong trình duyệt CDP.");
     }
 
     if (urlPattern) {
-      const matched = pageTabs.find(t => t.url.toLowerCase().includes(urlPattern.toLowerCase()) || t.title.toLowerCase().includes(urlPattern.toLowerCase()));
+      const q = urlPattern.toLowerCase();
+      const matched = pageTabs.find(
+        (t) => t.url.toLowerCase().includes(q) || t.title.toLowerCase().includes(q)
+      );
       if (matched) return matched;
     }
 
+    if (this.controlledTabId) {
+      const sticky = pageTabs.find((t) => t.id === this.controlledTabId);
+      if (sticky) return sticky;
+    }
+
+    this.controlledTabId = pageTabs[0].id;
     return pageTabs[0];
   }
 
   /**
-   * Gửi một lệnh CDP qua WebSocket tới một tab cụ thể và nhận kết quả
+   * Mở 1 phiên WebSocket CDP duy nhất để thực thi nhiều lệnh liên tiếp (nhanh gấp 3-5x).
    */
-  async sendCommand(wsUrl: string, method: string, params: any = {}, timeoutMs = 20000): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let ws: WebSocket | null = null;
-      let timer: any = null;
-      const cmdId = Math.floor(Math.random() * 1000000) + 1;
+  async withSession<T>(wsUrl: string, fn: (send: CdpSendFn) => Promise<T>, defaultTimeoutMs = 25000): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let ws: WebSocket;
+      let nextId = 1;
+      const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: any }>();
 
-      timer = setTimeout(() => {
-        if (ws) {
-          try { ws.close(); } catch { }
+      const failAll = (err: any) => {
+        for (const [, p] of pending) {
+          clearTimeout(p.timer);
+          p.reject(err);
         }
-        reject(new Error(`Lệnh CDP '${method}' bị quá hạn (timeout sau ${timeoutMs / 1000}s)`));
-      }, timeoutMs);
+        pending.clear();
+      };
+
+      const send: CdpSendFn = (method: string, params: any = {}, timeoutMs = defaultTimeoutMs) => {
+        return new Promise((res, rej) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            return rej(new Error(`WebSocket CDP chưa mở khi gọi '${method}'`));
+          }
+          const id = nextId++;
+          const timer = setTimeout(() => {
+            pending.delete(id);
+            rej(new Error(`Lệnh CDP '${method}' quá hạn sau ${timeoutMs / 1000}s`));
+          }, timeoutMs);
+          pending.set(id, { resolve: res, reject: rej, timer });
+          try {
+            ws.send(JSON.stringify({ id, method, params }));
+          } catch (err) {
+            clearTimeout(timer);
+            pending.delete(id);
+            rej(err);
+          }
+        });
+      };
+
+      const connectTimer = setTimeout(() => {
+        try { ws?.close(); } catch {}
+        reject(new Error("Kết nối WebSocket CDP quá hạn sau 8s"));
+      }, 8000);
 
       try {
         ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-          ws!.send(JSON.stringify({
-            id: cmdId,
-            method,
-            params
-          }));
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.id === cmdId) {
-              clearTimeout(timer);
-              ws!.close();
-              if (data.error) {
-                reject(new Error(`Lỗi CDP [${method}]: ${data.error.message || JSON.stringify(data.error)}`));
-              } else {
-                resolve(data.result);
-              }
-            }
-          } catch (err) {
-            clearTimeout(timer);
-            ws?.close();
-            reject(err);
-          }
-        };
-
-        ws.onerror = (err) => {
-          clearTimeout(timer);
-          reject(err);
-        };
       } catch (err) {
-        clearTimeout(timer);
+        clearTimeout(connectTimer);
         reject(err);
+        return;
       }
+
+      ws.onopen = () => {
+        clearTimeout(connectTimer);
+        fn(send)
+          .then((result) => {
+            try { ws.close(); } catch {}
+            resolve(result);
+          })
+          .catch((err) => {
+            try { ws.close(); } catch {}
+            reject(err);
+          });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(typeof event.data === "string" ? event.data : String(event.data));
+          if (data.id && pending.has(data.id)) {
+            const p = pending.get(data.id)!;
+            pending.delete(data.id);
+            clearTimeout(p.timer);
+            if (data.error) {
+              p.reject(new Error(`Lỗi CDP: ${data.error.message || JSON.stringify(data.error)}`));
+            } else {
+              p.resolve(data.result);
+            }
+          }
+        } catch {}
+      };
+
+      ws.onerror = () => {
+        clearTimeout(connectTimer);
+        const err = new Error("Lỗi kết nối WebSocket CDP");
+        failAll(err);
+        reject(err);
+      };
+
+      ws.onclose = () => {
+        clearTimeout(connectTimer);
+        if (pending.size > 0) {
+          failAll(new Error("WebSocket CDP đã đóng trước khi nhận phản hồi"));
+        }
+      };
     });
   }
 
   /**
-   * Chạy biểu thức JavaScript trong ngữ cảnh của tab
+   * Gửi một lệnh CDP đơn lẻ qua WebSocket
+   */
+  async sendCommand(wsUrl: string, method: string, params: any = {}, timeoutMs = 20000): Promise<any> {
+    return this.withSession(wsUrl, (send) => send(method, params, timeoutMs), timeoutMs);
+  }
+
+  /**
+   * Chạy biểu thức JavaScript trong ngữ cảnh MAIN world của tab
    */
   async evaluateJs(wsUrl: string, expression: string, awaitPromise = true, timeoutMs = 20000): Promise<any> {
-    const res = await this.sendCommand(wsUrl, "Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise
-    }, timeoutMs);
-
-    const val = res?.result?.value;
+    const res = await this.sendCommand(
+      wsUrl,
+      "Runtime.evaluate",
+      { expression, returnByValue: true, awaitPromise },
+      timeoutMs
+    );
     if (res?.exceptionDetails) {
       const desc = res.exceptionDetails.exception?.description || res.exceptionDetails.text;
       throw new Error(`Lỗi JS thực thi trên trang: ${desc}`);
     }
-    return val;
+    return res?.result?.value;
+  }
+
+  private async evalInSession(send: CdpSendFn, expression: string, awaitPromise = true, timeoutMs = 25000): Promise<any> {
+    const res = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise }, timeoutMs);
+    if (res?.exceptionDetails) {
+      const desc = res.exceptionDetails.exception?.description || res.exceptionDetails.text;
+      throw new Error(`Lỗi JS thực thi trên trang: ${desc}`);
+    }
+    return res?.result?.value;
   }
 
   /**
-   * Mở URL mới hoặc điều hướng tab hiện tại
+   * Nạp tự động Otter Page-Agent Core (`window.__otterCore`) vào tab CDP:
+   * - Đăng ký `Page.addScriptToEvaluateOnNewDocument` để MỌI lần điều hướng / F5 đều có sẵn core ngay từ đầu.
+   * - Đảm bảo trang hiện tại cũng đã có `window.__otterCore` ngay lập tức (idempotent).
+   */
+  async ensureCoreInSession(send: CdpSendFn, tabId: string): Promise<void> {
+    if (!this.preloadedTabIds.has(tabId)) {
+      try {
+        await send("Page.enable", {}, 5000);
+        await send("Page.addScriptToEvaluateOnNewDocument", { source: OTTER_PAGE_CORE_SCRIPT }, 5000);
+        this.preloadedTabIds.add(tabId);
+      } catch {}
+    }
+    const loaded = await this.evalInSession(
+      send,
+      `Boolean(window.__otterCore && window.__otterCore.version === ${JSON.stringify(OTTER_CORE_VERSION)})`,
+      false,
+      5000
+    ).catch(() => false);
+    if (!loaded) {
+      await this.evalInSession(send, OTTER_PAGE_CORE_SCRIPT, false, 10000);
+    }
+  }
+
+  /**
+   * Nạp sẵn Otter Page-Agent Core vào tất cả các tab page đang mở ngay khi CDP vừa kết nối/khởi chạy.
+   */
+  async preloadCoreOnAllTabs(port?: number): Promise<number> {
+    try {
+      const tabs = await this.getTabs(port);
+      const pageTabs = tabs.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+      let count = 0;
+      for (const tab of pageTabs) {
+        try {
+          await this.withSession(tab.webSocketDebuggerUrl!, async (send) => {
+            await this.ensureCoreInSession(send, tab.id);
+          });
+          count++;
+        } catch {}
+      }
+      return count;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Chờ trang hoàn tất tải (document.readyState === 'complete' hoặc 'interactive')
+   */
+  private async waitForPageReady(wsUrl: string, timeoutMs = 12000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const state = await this.evaluateJs(wsUrl, "document.readyState", false, 2000);
+        if (state === "complete") return;
+      } catch {}
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+
+  private shouldAutoHud(): boolean {
+    const env = (process.env.OTTER_CDP_HUD || "").trim().toLowerCase();
+    if (env === "0" || env === "false" || env === "off") return false;
+    if (env === "1" || env === "true" || env === "on") return true;
+    // Tự động bật HUD trực quan trên desktop có màn hình; tắt khi chạy headless Linux
+    if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
+    return process.env.OTTER_CDP_HEADLESS !== "1";
+  }
+
+  /**
+   * Mở URL mới hoặc điều hướng tab đang điều khiển (tự nạp sẵn Otter Core ngay khi load!)
    */
   async openUrl(url: string, port?: number): Promise<{ ok: boolean; tabId: string; title: string; url: string }> {
     let targetUrl = url.trim();
-    if (!/^https?:\/\//i.test(targetUrl) && !/^chrome:\/\//i.test(targetUrl)) {
+    if (!/^https?:\/\//i.test(targetUrl) && !/^chrome:\/\//i.test(targetUrl) && !/^about:/i.test(targetUrl)) {
       targetUrl = "https://" + targetUrl;
     }
 
@@ -260,333 +398,553 @@ export class CdpBridge {
     let targetTab: CdpTab | null = null;
     try {
       targetTab = await this.findTargetTab(undefined, targetPort);
-    } catch { }
+    } catch {}
 
     if (targetTab && targetTab.webSocketDebuggerUrl) {
-      await this.sendCommand(targetTab.webSocketDebuggerUrl, "Page.navigate", { url: targetUrl });
-      // Chờ trang tải sơ bộ
-      await new Promise(r => setTimeout(r, 1500));
+      this.controlledTabId = targetTab.id;
+      await this.withSession(targetTab.webSocketDebuggerUrl, async (send) => {
+        await this.ensureCoreInSession(send, targetTab!.id);
+        await send("Page.navigate", { url: targetUrl });
+      });
+      await this.waitForPageReady(targetTab.webSocketDebuggerUrl, 10000);
+      await new Promise((r) => setTimeout(r, 400));
+
+      const meta = await this.withSession(targetTab.webSocketDebuggerUrl, async (send) => {
+        await this.ensureCoreInSession(send, targetTab!.id);
+        if (this.shouldAutoHud()) {
+          await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
+        }
+        return this.evalInSession(send, "({ title: document.title, url: location.href })", false, 4000);
+      }).catch(() => ({ title: targetTab!.title, url: targetUrl }));
+
       return {
         ok: true,
         tabId: targetTab.id,
-        title: targetTab.title,
-        url: targetUrl
+        title: meta?.title || targetTab.title,
+        url: meta?.url || targetUrl,
       };
     }
 
-    // Nếu chưa có tab, mở tab mới qua CDP REST API
     const newTabRes = await fetch(`http://127.0.0.1:${targetPort}/json/new?${encodeURIComponent(targetUrl)}`, {
-      method: "PUT"
+      method: "PUT",
     });
     const newTab = (await newTabRes.json()) as CdpTab;
-    await new Promise(r => setTimeout(r, 1500));
+    this.controlledTabId = newTab.id;
+    if (newTab.webSocketDebuggerUrl) {
+      await this.waitForPageReady(newTab.webSocketDebuggerUrl, 10000);
+      await this.withSession(newTab.webSocketDebuggerUrl, async (send) => {
+        await this.ensureCoreInSession(send, newTab.id);
+        if (this.shouldAutoHud()) {
+          await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
+        }
+      }).catch(() => {});
+    }
     return {
       ok: true,
       tabId: newTab.id,
       title: newTab.title,
-      url: newTab.url || targetUrl
+      url: newTab.url || targetUrl,
     };
   }
 
   /**
-   * Đọc cấu trúc trang hiện tại (Trích xuất interactive elements, đánh số [1], [2]...)
+   * Đọc cấu trúc trang với lõi Alibaba Page-Agent đầy đủ (Shadow DOM + iframe + Visual Badges + FB/Messenger)
    */
   async readPage(urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const extractionScript = `(() => {
-      const INTERACTIVE_SELECTOR = [
-        'a', 'button', 'input:not([type="hidden"])', 'select', 'textarea',
-        '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
-        '[role="switch"]', '[role="tab"]', '[role="menuitem"]', '[role="combobox"]',
-        '[role="option"]', '[role="searchbox"]', '[role="textbox"]', '[role="treeitem"]',
-        '[contenteditable="true"]', '[contenteditable=""]', '[tabindex]:not([tabindex="-1"])',
-        '[onclick]', '[data-action]', 'summary', '[class*="btn"]', '[class*="button"]'
-      ].join(',');
-
-      function collectCandidates(root, list = [], depth = 0) {
-        if (!root || depth > 8 || list.length >= 500) return list;
-        try {
-          const matches = root.querySelectorAll(INTERACTIVE_SELECTOR);
-          for (const el of matches) {
-            if (list.length >= 500) break;
-            if (el instanceof HTMLElement) list.push(el);
-          }
-        } catch (e) {}
-
-        try {
-          const allNodes = root.querySelectorAll('*');
-          for (const node of allNodes) {
-            if (list.length >= 500) break;
-            if (node.shadowRoot) collectCandidates(node.shadowRoot, list, depth + 1);
-          }
-        } catch (e) {}
-        return list;
+    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      if (this.shouldAutoHud()) {
+        await this.evalInSession(send, "window.__otterCore.injectHud(false)", false, 4000).catch(() => {});
       }
+      return this.evalInSession(
+        send,
+        `window.__otterCore.readPage({ showBadges: ${this.shouldAutoHud()} })`,
+        false,
+        15000
+      );
+    });
 
-      function isElementVisible(el) {
-        if (typeof el.checkVisibility === 'function') {
-          if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
-        }
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }
-
-      const vHeight = window.innerHeight;
-      const vWidth = window.innerWidth;
-      const rawCandidates = collectCandidates(document);
-      const seen = new Set();
-      const inView = [];
-      const outView = [];
-
-      for (const el of rawCandidates) {
-        if (seen.has(el)) continue;
-        seen.add(el);
-
-        const tag = el.tagName.toLowerCase();
-        if (tag === 'input' && el.type === 'hidden') continue;
-        if (['script', 'style', 'noscript', 'template', 'meta', 'link'].includes(tag)) continue;
-        if (el.parentElement && el.parentElement.closest('button, a, select')) continue;
-        if (!isElementVisible(el)) continue;
-
-        const rect = el.getBoundingClientRect();
-        const isInView = rect.top < vHeight && rect.bottom > 0 && rect.left < vWidth && rect.right > 0;
-        if (isInView) {
-          inView.push({ el, rect, isInView: true });
-        } else if (outView.length < 25) {
-          outView.push({ el, rect, isInView: false });
-        }
-      }
-
-      const finalSelection = [...inView.slice(0, 45), ...outView.slice(0, 15)];
-      window.__otter_elements = finalSelection.map(item => item.el);
-
-      const elementsData = finalSelection.map((item, idx) => {
-        const index = idx + 1;
-        const { el, rect, isInView } = item;
-        const tagName = el.tagName.toLowerCase();
-        const type = el.type || '';
-        const placeholder = el.placeholder || '';
-        const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('title') || '';
-        const href = el.href || '';
-        let text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
-        if (!text && ariaLabel) text = ariaLabel;
-        if (!text && placeholder) text = placeholder;
-        if (text.length > 70) text = text.slice(0, 67) + '...';
-
-        return {
-          index,
-          tagName,
-          type,
-          text,
-          value: el.value || '',
-          placeholder,
-          ariaLabel,
-          href: href && !href.startsWith('javascript:') ? href : '',
-          inView: isInView,
-          coords: {
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2)
-          }
-        };
-      });
-
-      let summaryText = (document.body?.innerText || '')
-        .replace(/\\n{3,}/g, '\\n\\n')
-        .slice(0, 1200)
-        .trim();
-
-      return {
-        title: document.title,
-        url: location.href,
-        elements: elementsData,
-        elementsCount: elementsData.length,
-        summaryText
-      };
-    })()`;
-
-    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, extractionScript);
-    return {
-      ...res,
-      tabId: tab.id
-    };
+    return { ...res, tabId: tab.id, coreVersion: OTTER_CORE_VERSION };
   }
 
   /**
-   * Bấm vào phần tử theo index
+   * Click kết hợp 2 tầng:
+   * - Tầng 1 (CDP Hardware): Input.dispatchMouseEvent (mouseMoved -> mousePressed -> mouseReleased, isTrusted=true)
+   * - Tầng 2 (Extension W3C Core): Fallback chuỗi 9 sự kiện Pointer/Mouse + elementFromPoint nếu ngoài viewport
    */
   async click(index: number, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const clickScript = `(() => {
-      const idx = ${index} - 1;
-      const elements = window.__otter_elements || [];
-      const target = elements[idx] || document.querySelector('[data-otter-index="${index}"]');
-      if (!target) return { ok: false, error: 'Không tìm thấy phần tử index [' + ${index} + ']' };
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      const prep = await this.evalInSession(send, `window.__otterCore.prepClick(${Number(index)})`, false, 8000);
+      if (!prep?.ok) {
+        throw new Error(prep?.error || `Không tìm thấy phần tử index [${index}]`);
+      }
 
-      target.scrollIntoView({ behavior: 'instant', block: 'center' });
-      target.focus();
+      if (prep.inViewport) {
+        try {
+          await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: prep.x, y: prep.y, button: "none" });
+          await send("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            x: prep.x,
+            y: prep.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await send("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: prep.x,
+            y: prep.y,
+            button: "left",
+            clickCount: 1,
+          });
+          return {
+            ok: true,
+            message: `Đã click phần cứng CDP (isTrusted) vào [${index}] <${prep.tag}> "${prep.text}" thành công`,
+          };
+        } catch {
+          // Fallback sang W3C Click của Extension Core nếu CDP Input lỗi
+        }
+      }
 
-      ['mouseover', 'mousedown', 'mouseup', 'click'].forEach(evtType => {
-        target.dispatchEvent(new MouseEvent(evtType, { bubbles: true, cancelable: true, view: window }));
-      });
-      return { ok: true, text: (target.innerText || target.value || target.tagName).slice(0, 30) };
-    })()`;
-
-    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, clickScript);
-    if (!res.ok) throw new Error(res.error || `Click thất bại tại index [${index}]`);
-    return {
-      ok: true,
-      message: `Đã click vào phần tử [${index}] (${res.text}) qua CDP thành công`
-    };
+      const fallback = await this.evalInSession(send, `window.__otterCore.w3cClick(${Number(index)})`, false, 8000);
+      if (!fallback?.ok) throw new Error(fallback?.message || `Click thất bại tại index [${index}]`);
+      return fallback;
+    });
   }
 
   /**
-   * Nhập văn bản vào ô input theo index
+   * Nhập văn bản kết hợp Extension Core (React 17/18 Native Setter + Meta Lexical + ContentEditable)
+   * và CDP Hardware Enter (`Input.dispatchKeyEvent`, isTrusted=true).
    */
-  async type(index: number, text: string, pressEnter = false, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
+  async type(
+    index: number,
+    text: string,
+    pressEnter = false,
+    urlPattern?: string,
+    port?: number
+  ): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const safeText = JSON.stringify(text);
-    const typeScript = `(() => {
-      const idx = ${index} - 1;
-      const elements = window.__otter_elements || [];
-      const target = elements[idx] || document.querySelector('[data-otter-index="${index}"]');
-      if (!target) return { ok: false, error: 'Không tìm thấy phần tử index [' + ${index} + ']' };
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      const res = await this.evalInSession(
+        send,
+        `window.__otterCore.typeElement(${Number(index)}, ${JSON.stringify(text)}, ${Boolean(pressEnter)})`,
+        false,
+        10000
+      );
+      if (!res?.ok) throw new Error(res?.message || `Nhập văn bản thất bại tại index [${index}]`);
 
-      target.scrollIntoView({ behavior: 'instant', block: 'center' });
-      target.focus();
-
-      if ('value' in target) {
-        target.value = ${safeText};
-      } else {
-        target.innerText = ${safeText};
+      if (pressEnter) {
+        try {
+          await send("Input.dispatchKeyEvent", {
+            type: "rawKeyDown",
+            key: "Enter",
+            code: "Enter",
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+          });
+          await send("Input.dispatchKeyEvent", {
+            type: "keyUp",
+            key: "Enter",
+            code: "Enter",
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+          });
+        } catch {}
       }
 
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      target.dispatchEvent(new Event('change', { bubbles: true }));
-
-      if (${pressEnter}) {
-        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-        target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      }
-
-      return { ok: true };
-    })()`;
-
-    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, typeScript);
-    if (!res.ok) throw new Error(res.error || `Nhập văn bản thất bại tại index [${index}]`);
-    return {
-      ok: true,
-      message: `Đã nhập "${text}" vào phần tử [${index}]${pressEnter ? " và ấn Enter" : ""} qua CDP thành công`
-    };
+      return { ok: true, message: res.message };
+    });
   }
 
-  /**
-   * Chọn một tùy chọn trong thẻ <select> theo index (khớp theo value hoặc chữ hiển thị)
-   */
   async select(index: number, option: string, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const safeOption = JSON.stringify(option);
-    const selectScript = `(() => {
-      const idx = ${index} - 1;
-      const elements = window.__otter_elements || [];
-      const target = elements[idx] || document.querySelector('[data-otter-index="${index}"]');
-      if (!target) return { ok: false, error: 'Không tìm thấy phần tử index [' + ${index} + ']' };
-      if (target.tagName !== 'SELECT') return { ok: false, error: 'Phần tử [' + ${index} + '] không phải thẻ SELECT (là ' + target.tagName + ')' };
-
-      const wanted = ${safeOption};
-      const opt = Array.from(target.options).find(o => o.value === wanted || o.text.trim() === wanted);
-      if (!opt) return { ok: false, error: 'Không tìm thấy tùy chọn "' + wanted + '" trong SELECT [' + ${index} + ']' };
-
-      target.scrollIntoView({ behavior: 'instant', block: 'center' });
-      target.focus();
-      target.value = opt.value;
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      target.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, text: opt.text.trim() };
-    })()`;
-
-    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, selectScript);
-    if (!res.ok) throw new Error(res.error || `Chọn tùy chọn thất bại tại index [${index}]`);
-    return {
-      ok: true,
-      message: `Đã chọn "${res.text}" trong SELECT [${index}] qua CDP thành công`
-    };
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      const res = await this.evalInSession(
+        send,
+        `window.__otterCore.selectOption(${Number(index)}, ${JSON.stringify(option)})`,
+        false,
+        8000
+      );
+      if (!res?.ok) throw new Error(res?.message || `Chọn tùy chọn thất bại tại index [${index}]`);
+      return res;
+    });
   }
 
-  /**
-   * Cuộn trang
-   */
-  async scroll(direction: "up" | "down", amount = 600, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
+  async scroll(direction: "up" | "down", amount = 800, urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
 
-    const scrollY = direction === "up" ? -amount : amount;
-    await this.evaluateJs(tab.webSocketDebuggerUrl, `window.scrollBy({ top: ${scrollY}, behavior: 'smooth' })`);
-    return {
-      ok: true,
-      message: `Đã cuộn trang sang hướng ${direction} ${amount}px qua CDP`
-    };
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(
+        send,
+        `window.__otterCore.scrollPage(${JSON.stringify(direction)}, ${Number(amount) || 800})`,
+        true,
+        10000
+      );
+    });
   }
 
-  /**
-   * Quay lại trang trước
-   */
   async back(urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab(urlPattern, port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
-
-    await this.evaluateJs(tab.webSocketDebuggerUrl, `window.history.back()`);
-    return {
-      ok: true,
-      message: `Đã quay lại trang trước qua CDP`
-    };
+    await this.evaluateJs(tab.webSocketDebuggerUrl, "window.history.back()", false);
+    return { ok: true, message: "Đã quay lại trang trước qua CDP" };
   }
 
-  /**
-   * Liệt kê danh sách tabs
-   */
   async listTabs(port?: number): Promise<{ ok: boolean; tabs: any[] }> {
     const tabs = await this.getTabs(port);
-    const pages = tabs.filter(t => t.type === "page").map(t => ({
-      id: t.id,
-      title: t.title,
-      url: t.url,
-      isControlled: true,
-      active: true
-    }));
+    const pages = tabs
+      .filter((t) => t.type === "page")
+      .map((t, idx) => ({
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        isControlled: this.controlledTabId ? t.id === this.controlledTabId : idx === 0,
+        active: idx === 0,
+      }));
     return { ok: true, tabs: pages };
   }
 
-  /**
-   * Đóng một tab
-   */
   async closeTab(tabId?: string | number, port?: number): Promise<{ ok: boolean; message: string }> {
     const targetPort = port || this.defaultPort;
     const targetId = tabId ? String(tabId) : (await this.findTargetTab(undefined, targetPort)).id;
     const res = await fetch(`http://127.0.0.1:${targetPort}/json/close/${targetId}`, { method: "PUT" });
+    this.preloadedTabIds.delete(targetId);
+    if (this.controlledTabId === targetId) this.controlledTabId = null;
     return {
       ok: res.ok,
-      message: res.ok ? `Đã đóng tab [${targetId}] qua CDP thành công` : `Không thể đóng tab [${targetId}] qua CDP`
+      message: res.ok ? `Đã đóng tab [${targetId}] qua CDP thành công` : `Không thể đóng tab [${targetId}] qua CDP`,
     };
   }
 
-  /**
-   * Chuyển tab điều khiển (bring to front)
-   */
   async switchTab(tabId: string | number, port?: number): Promise<{ ok: boolean; message: string }> {
     const targetPort = port || this.defaultPort;
-    const res = await fetch(`http://127.0.0.1:${targetPort}/json/activate/${tabId}`, { method: "PUT" });
+    const idStr = String(tabId);
+    const res = await fetch(`http://127.0.0.1:${targetPort}/json/activate/${idStr}`, { method: "PUT" });
+    if (res.ok) this.controlledTabId = idStr;
     return {
       ok: res.ok,
-      message: res.ok ? `Đã kích hoạt tab [${tabId}] qua CDP thành công` : `Không thể kích hoạt tab [${tabId}] qua CDP`
+      message: res.ok ? `Đã kích hoạt tab [${idStr}] qua CDP thành công` : `Không thể kích hoạt tab [${idStr}] qua CDP`,
     };
+  }
+
+  async closeMessengerDocks(port?: number): Promise<any> {
+    const tab = await this.findTargetTab("facebook.com", port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 8000);
+    });
+  }
+
+  async readComments(currentUserName?: string, postUrl?: string, port?: number): Promise<any> {
+    let tab = await this.findTargetTab("facebook.com", port);
+    if (postUrl && postUrl.trim() && isFacebookPostMismatch(tab.url || "", postUrl)) {
+      await this.openUrl(postUrl, port);
+      await new Promise((r) => setTimeout(r, 1500));
+      tab = await this.findTargetTab("facebook.com", port);
+    }
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+
+    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(
+        send,
+        `window.__otterCore.readComments(${JSON.stringify(currentUserName || "")})`,
+        false,
+        15000
+      );
+    });
+    if (res) res.tabId = tab.id;
+    return res;
+  }
+
+  async readFeed(port?: number): Promise<any> {
+    const tab = await this.findTargetTab("facebook.com", port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(send, "window.__otterCore.readFeed()", false, 15000);
+    });
+    if (res) res.tabId = tab.id;
+    return res;
+  }
+
+  async reactFacebook(
+    index?: number,
+    author?: string,
+    reaction: "like" | "love" | "care" | "haha" | "wow" | "sad" | "angry" = "like",
+    port?: number
+  ): Promise<any> {
+    const tab = await this.findTargetTab("facebook.com", port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(
+        send,
+        `window.__otterCore.reactFacebook(${index ? Number(index) : "null"}, ${JSON.stringify(author || null)}, ${JSON.stringify(reaction || "like")})`,
+        true,
+        15000
+      );
+    });
+  }
+
+  async commentFacebook(
+    params: { commentIndex?: number; author?: string; commentText: string },
+    port?: number
+  ): Promise<any> {
+    const tab = await this.findTargetTab("facebook.com", port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(
+        send,
+        `window.__otterCore.commentFacebook(${params.commentIndex ? Number(params.commentIndex) : "null"}, ${JSON.stringify(params.author || null)}, ${JSON.stringify(params.commentText)})`,
+        true,
+        25000
+      );
+    }, 30000);
+  }
+
+  async postToFacebookGroup(params: { groupUrl: string; content: string }, port?: number): Promise<any> {
+    const targetUrl = params.groupUrl.trim();
+    let tab = await this.findTargetTab("facebook.com", port).catch(() => null);
+    const normTarget = targetUrl.replace(/\/$/, "");
+    const normCur = (tab?.url || "").trim().replace(/\/$/, "");
+    if (!tab || !normCur.includes(normTarget)) {
+      await this.openUrl(targetUrl, port);
+      await new Promise((r) => setTimeout(r, 2000));
+      tab = await this.findTargetTab("facebook.com", port);
+    }
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab!.id);
+      await this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 5000).catch(() => {});
+      const openRes = await this.evalInSession(send, "window.__otterCore.openFbComposer(false)", true, 15000);
+      if (!openRes?.ok) return { ok: false, verified: false, message: openRes?.message || "Không mở được khung soạn bài nhóm" };
+      return this.evalInSession(send, `window.__otterCore.finishFbPost(${JSON.stringify(params.content)}, false)`, true, 30000);
+    }, 35000);
+  }
+
+  /**
+   * Đăng bài kèm Ảnh / Video lên Facebook sử dụng CDP `DOM.setFileInputFiles` trực tiếp từ ổ đĩa
+   * (nhanh hơn nhiều so với Base64 và hỗ trợ video dung lượng lớn).
+   */
+  async postMediaToFacebook(
+    params: {
+      targetType: "profile" | "group" | "page";
+      targetUrl?: string;
+      mediaPath?: string;
+      mediaType?: "video" | "image" | "none";
+      caption: string;
+    },
+    port?: number
+  ): Promise<any> {
+    let destUrl = (params.targetUrl || "").trim();
+    if (!destUrl) {
+      destUrl = params.targetType === "group" ? "https://www.facebook.com/groups/feed/" : "https://www.facebook.com/";
+    }
+    if (!/^https?:\/\//i.test(destUrl)) destUrl = `https://${destUrl}`;
+
+    let tab = await this.findTargetTab("facebook.com", port).catch(() => null);
+    const normTarget = destUrl.replace(/\/$/, "");
+    const normCur = (tab?.url || "").trim().replace(/\/$/, "");
+    if (!tab || !normCur.includes(normTarget)) {
+      await this.openUrl(destUrl, port);
+      await new Promise((r) => setTimeout(r, 2000));
+      tab = await this.findTargetTab("facebook.com", port);
+    }
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+
+    const resolvedMedia = params.mediaPath ? path.resolve(params.mediaPath) : "";
+    const hasMedia = Boolean(resolvedMedia && fs.existsSync(resolvedMedia));
+
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab!.id);
+      await this.evalInSession(send, "window.__otterCore.closeMessengerDocks()", false, 5000).catch(() => {});
+
+      const openRes = await this.evalInSession(
+        send,
+        `window.__otterCore.openFbComposer(${hasMedia})`,
+        true,
+        15000
+      );
+      if (!openRes?.ok) {
+        return { ok: false, verified: false, message: openRes?.message || "Không mở được khung soạn bài Facebook" };
+      }
+
+      if (hasMedia && openRes.hasFileInput) {
+        // Dùng CDP DOM.setFileInputFiles nạp file trực tiếp từ ổ đĩa (không cần Base64)
+        await send("DOM.enable", {}, 5000);
+        const doc = await send("DOM.getDocument", { depth: 1 }, 5000);
+        const query = await send(
+          "DOM.querySelector",
+          { nodeId: doc.root.nodeId, selector: 'input[type="file"][data-otter-file-target="1"]' },
+          5000
+        );
+        if (query?.nodeId) {
+          await send("DOM.setFileInputFiles", { nodeId: query.nodeId, files: [resolvedMedia] }, 15000);
+        }
+      }
+
+      return this.evalInSession(
+        send,
+        `window.__otterCore.finishFbPost(${JSON.stringify(params.caption)}, ${hasMedia})`,
+        true,
+        70000
+      );
+    }, 75000);
+  }
+
+  /**
+   * Giao nhiệm vụ cho Muse AI trên web (muse.ai) qua CDP
+   */
+  async askMuse(
+    task: string,
+    options?: { newThread?: boolean; timeoutMs?: number; closeTabOnDone?: boolean },
+    port?: number
+  ): Promise<{ ok: boolean; replyText: string; attachments: any[]; tabId?: string; error?: string }> {
+    const targetPort = port || this.defaultPort;
+    const timeout = options?.timeoutMs || 180000;
+    const deadline = Date.now() + timeout;
+
+    const tabs = await this.getTabs(targetPort);
+    let museTab = tabs.find((t) => t.type === "page" && t.url?.includes("muse.ai") && t.webSocketDebuggerUrl);
+    let created = false;
+
+    if (!museTab) {
+      const r = await fetch(`http://127.0.0.1:${targetPort}/json/new?${encodeURIComponent("https://muse.ai/thread/new")}`, {
+        method: "PUT",
+      });
+      museTab = (await r.json()) as CdpTab;
+      created = true;
+      if (museTab.webSocketDebuggerUrl) await this.waitForPageReady(museTab.webSocketDebuggerUrl, 15000);
+    } else if (options?.newThread && museTab.webSocketDebuggerUrl) {
+      await this.sendCommand(museTab.webSocketDebuggerUrl, "Page.navigate", { url: "https://muse.ai/thread/new" });
+      await this.waitForPageReady(museTab.webSocketDebuggerUrl, 15000);
+    }
+
+    if (!museTab?.webSocketDebuggerUrl) {
+      return { ok: false, replyText: "", attachments: [], error: "Không thể mở tab muse.ai qua CDP" };
+    }
+
+    const wsUrl = museTab.webSocketDebuggerUrl;
+    const tabId = museTab.id;
+
+    try {
+      // Chờ trang Muse sẵn sàng
+      const readyDeadline = Date.now() + 25000;
+      let ready = false;
+      while (Date.now() < readyDeadline) {
+        const status = await this.withSession(wsUrl, async (send) => {
+          await this.ensureCoreInSession(send, tabId);
+          return this.evalInSession(send, "window.__otterCore.museCheckReady()", false, 5000);
+        });
+        if (status === "login_required") {
+          return { ok: false, replyText: "", attachments: [], error: "Tài khoản Muse chưa đăng nhập trên Chrome CDP." };
+        }
+        if (status === "ready") {
+          ready = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      if (!ready) return { ok: false, replyText: "", attachments: [], error: "Trang Muse chưa sẵn sàng sau 25s." };
+
+      const sendRes = await this.withSession(wsUrl, async (send) => {
+        await this.ensureCoreInSession(send, tabId);
+        return this.evalInSession(send, `window.__otterCore.museSend(${JSON.stringify(task)})`, true, 10000);
+      });
+      if (!sendRes?.ok) return { ok: false, replyText: "", attachments: [], error: sendRes?.error || "Gửi prompt vào Muse thất bại" };
+
+      const { oldBubbleCount = 0, oldLastText = "" } = sendRes;
+      let lastText = "";
+      let stableCount = 0;
+      let hasStarted = false;
+
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const state = await this.withSession(wsUrl, async (send) => {
+          await this.ensureCoreInSession(send, tabId);
+          return this.evalInSession(send, "window.__otterCore.musePoll()", false, 8000);
+        }).catch(() => null);
+        if (!state) continue;
+        if (state.isOutOfCredits) return { ok: false, replyText: "", attachments: [], error: "Tài khoản Muse đã hết hạn ngạch." };
+
+        if (!hasStarted && (state.hasStop || state.bubbleCount > oldBubbleCount || (state.text && state.text !== oldLastText))) {
+          hasStarted = true;
+        }
+        if (hasStarted) {
+          if (state.text === lastText && state.text.length > 0) {
+            stableCount++;
+            const finished = (!state.hasStop && (stableCount >= 2 || (state.attachments?.length || 0) > 0)) || stableCount >= 5;
+            if (finished) {
+              const finalAtts = state.attachments || [];
+              for (const a of finalAtts) {
+                if (!a.url) continue;
+                const extracted = await this.withSession(wsUrl, async (send) => {
+                  await this.ensureCoreInSession(send, tabId);
+                  return this.evalInSession(send, `window.__otterCore.museExtractBlob(${JSON.stringify(a.url)})`, true, 30000);
+                }).catch(() => null);
+                if (extracted?.base64) {
+                  a.base64 = extracted.base64;
+                  a.mime = extracted.mime;
+                  a.size = extracted.size;
+                }
+              }
+              return { ok: true, replyText: state.text, attachments: finalAtts, tabId };
+            }
+          } else {
+            lastText = state.text;
+            stableCount = 0;
+          }
+        }
+      }
+      return { ok: false, replyText: lastText, attachments: [], error: `Quá thời gian chờ (${Math.round(timeout / 1000)}s) phản hồi từ Muse.` };
+    } finally {
+      if (options?.closeTabOnDone && created) {
+        await this.closeTab(tabId, targetPort).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Bật / tắt Visual Activation HUD + Live Hover Inspector trên tab CDP hiện tại
+   */
+  async injectHud(toggle = false, urlPattern?: string, port?: number): Promise<any> {
+    const tab = await this.findTargetTab(urlPattern, port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(send, `window.__otterCore.injectHud(${Boolean(toggle)})`, false, 6000);
+    });
+  }
+
+  /**
+   * Thực thi JS tùy ý trên tab CDP
+   */
+  async evaluateOnTab(script: string, urlPattern?: string, port?: number): Promise<any> {
+    const tab = await this.findTargetTab(urlPattern, port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+    return this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      const value = await this.evalInSession(send, script, true, 25000);
+      return { ok: true, result: value, tabId: tab.id };
+    });
   }
 
   /**
@@ -603,11 +961,14 @@ export class CdpBridge {
       if (!tab.webSocketDebuggerUrl) return { available: false, averageLatencyMs: -1, error: "Không có WebSocket URL" };
 
       const latencies: number[] = [];
-      for (let i = 0; i < rounds; i++) {
-        const start = performance.now();
-        await this.evaluateJs(tab.webSocketDebuggerUrl, "1 + 1", false, 3000);
-        latencies.push(performance.now() - start);
-      }
+      await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+        await this.ensureCoreInSession(send, tab.id);
+        for (let i = 0; i < rounds; i++) {
+          const start = performance.now();
+          await this.evalInSession(send, "1 + 1", false, 3000);
+          latencies.push(performance.now() - start);
+        }
+      });
 
       const avg = Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
       return { available: true, averageLatencyMs: avg };
@@ -618,62 +979,42 @@ export class CdpBridge {
 
   /**
    * Chèn tin nhắn vào ô nhập của ChatGPT Web qua CDP (không cần Extension).
-   * Tìm tab chatgpt.com, điền nội dung vào ô soạn thảo và bấm nút gửi nếu autoSubmit.
    */
   async injectChatMessage(text: string, autoSubmit = true, port?: number): Promise<{ ok: boolean; message: string }> {
     const tab = await this.findTargetTab("chatgpt.com", port);
     if (!tab.webSocketDebuggerUrl) throw new Error("Tab ChatGPT không có webSocketDebuggerUrl hợp lệ");
 
-    const safeText = JSON.stringify(text);
-    const injectScript = `(() => {
-      const editor = document.querySelector('#prompt-textarea')
-        || document.querySelector('div[contenteditable="true"][data-testid="prompt-textarea"]')
-        || document.querySelector('textarea');
-      if (!editor) return { ok: false, error: 'Không tìm thấy ô soạn thảo ChatGPT (#prompt-textarea)' };
-
-      editor.scrollIntoView({ behavior: 'instant', block: 'center' });
-      editor.focus();
-      // execCommand insertText hoạt động tốt với editor React của ChatGPT.
-      const inserted = document.execCommand && document.execCommand('insertText', false, ${safeText});
-      if (!inserted) {
-        if ('value' in editor) editor.value = ${safeText};
-        else editor.textContent = ${safeText};
-        editor.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      return { ok: true };
-    })()`;
-
-    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, injectScript);
-    if (!res.ok) throw new Error(res.error || "Chèn tin nhắn vào ChatGPT thất bại");
-
-    if (autoSubmit) {
-      await new Promise((r) => setTimeout(r, 400));
-      const sendScript = `(() => {
-        const btn = document.querySelector('button[data-testid="send-button"]')
-          || document.querySelector('button[aria-label*="Send"]')
-          || document.querySelector('button[aria-label*="Gửi"]');
-        if (!btn) return { ok: false, error: 'Không tìm thấy nút gửi của ChatGPT' };
-        if (btn.disabled) return { ok: false, error: 'Nút gửi đang bị vô hiệu hóa' };
-        btn.click();
-        return { ok: true };
-      })()`;
-      const sendRes = await this.evaluateJs(tab.webSocketDebuggerUrl, sendScript);
-      if (!sendRes.ok) throw new Error(sendRes.error || "Bấm nút gửi ChatGPT thất bại");
-      return { ok: true, message: "Đã chèn và gửi tin nhắn vào ChatGPT qua CDP thành công" };
-    }
-    return { ok: true, message: "Đã chèn tin nhắn vào ô soạn thảo ChatGPT qua CDP (chưa gửi)" };
+    const res = await this.withSession(tab.webSocketDebuggerUrl, async (send) => {
+      await this.ensureCoreInSession(send, tab.id);
+      return this.evalInSession(
+        send,
+        `window.__otterCore.injectChatMessage(${JSON.stringify(text)}, ${Boolean(autoSubmit)})`,
+        true,
+        12000
+      );
+    });
+    if (!res?.ok) throw new Error(res?.error || "Chèn tin nhắn vào ChatGPT thất bại");
+    return {
+      ok: true,
+      message: autoSubmit
+        ? "Đã chèn và gửi tin nhắn vào ChatGPT qua CDP Core thành công"
+        : "Đã chèn tin nhắn vào ô soạn thảo ChatGPT qua CDP Core (chưa gửi)",
+    };
   }
 
-  private spawnedChrome: ChildProcess | null = null;
-
   /**
-   * Đảm bảo có Chrome mở cổng CDP: nếu chưa có thì thử GPM Login,
-   * cuối cùng tự spawn Chrome với profile riêng ~/.otter/cdp-profile.
+   * Đảm bảo có Chrome mở cổng CDP và tự động nạp sẵn Otter Core vào tất cả tab ngay khi load!
    */
   async ensureCdpChrome(port?: number): Promise<boolean> {
     const targetPort = port || this.defaultPort;
-    if (await this.isAvailable(targetPort)) return true;
-    if (await this.ensureProfileRunning(undefined, targetPort)) return true;
+    if (await this.isAvailable(targetPort)) {
+      void this.preloadCoreOnAllTabs(targetPort);
+      return true;
+    }
+    if (await this.ensureProfileRunning(undefined, targetPort)) {
+      void this.preloadCoreOnAllTabs(targetPort);
+      return true;
+    }
 
     const chromePath = findChromeExecutable();
     if (!chromePath) {
@@ -702,7 +1043,9 @@ export class CdpBridge {
     ];
 
     try {
-      console.log(`[CDP Bridge] Đang tự khởi động Chrome CDP (cổng ${targetPort}, profile ${profileDir}${headless ? ", headless" : ""})...`);
+      console.log(
+        `[CDP Bridge] Đang tự khởi động Chrome CDP (cổng ${targetPort}, profile ${profileDir}${headless ? ", headless" : ""})...`
+      );
       const child = spawn(chromePath, args, { detached: true, stdio: "ignore" });
       child.on("error", () => {});
       child.unref();
@@ -714,14 +1057,18 @@ export class CdpBridge {
 
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 500));
-      if (await this.isAvailable(targetPort)) return true;
+      if (await this.isAvailable(targetPort)) {
+        const preloaded = await this.preloadCoreOnAllTabs(targetPort);
+        console.log(`[CDP Bridge] Đã nạp sẵn Otter Page-Agent Core (${OTTER_CORE_VERSION}) vào ${preloaded} tab.`);
+        return true;
+      }
     }
     console.warn(`[CDP Bridge] Chrome đã spawn nhưng cổng ${targetPort} chưa sẵn sàng sau 10 giây.`);
     return false;
   }
 
   /**
-   * Unified dispatcher thực thi các lệnh hành động giống như BrowserBridge
+   * Unified dispatcher — đầy đủ 100% hành động của Extension BrowserController chạy trực tiếp trên CDP!
    */
   async execute(action: string, params: any = {}): Promise<any> {
     switch (action) {
@@ -735,10 +1082,8 @@ export class CdpBridge {
         return this.type(params.index, params.text, params.pressEnter, params.urlPattern);
       case "select":
         return this.select(params.index, params.option, params.urlPattern);
-      case "inject_chat_message":
-        return this.injectChatMessage(params.text ?? params.message ?? "", params.autoSubmit !== false);
       case "scroll":
-        return this.scroll(params.direction, params.amount, params.urlPattern);
+        return this.scroll(params.direction || "down", params.amount, params.urlPattern);
       case "back":
         return this.back(params.urlPattern);
       case "list_tabs":
@@ -747,8 +1092,52 @@ export class CdpBridge {
         return this.switchTab(params.tabId);
       case "close_tab":
         return this.closeTab(params.tabId);
+      case "inject_chat_message":
+        return this.injectChatMessage(params.text ?? params.message ?? "", params.autoSubmit !== false);
+      case "evaluate_js":
+        return this.evaluateOnTab(params.script || params.code || "", params.urlPattern);
+      case "close_messenger_docks":
+        return this.closeMessengerDocks();
+      case "read_comments":
+        return this.readComments(params.currentUserName, params.postUrl);
+      case "read_feed":
+        return this.readFeed();
+      case "fb_react":
+        return this.reactFacebook(params.index, params.author, params.reaction);
+      case "fb_comment":
+        return this.commentFacebook({
+          commentIndex: params.commentIndex,
+          author: params.author,
+          commentText: params.commentText,
+        });
+      case "fb_post_to_group":
+        return this.postToFacebookGroup({
+          groupUrl: params.groupUrl,
+          content: params.content,
+        });
+      case "fb_post_media":
+        return this.postMediaToFacebook({
+          targetType: params.targetType || "profile",
+          targetUrl: params.targetUrl,
+          mediaPath: params.mediaPath,
+          mediaType: params.mediaType,
+          caption: params.caption,
+        });
+      case "ask_muse":
+        return this.askMuse(params.task, {
+          newThread: params.newThread,
+          timeoutMs: params.timeoutMs,
+          closeTabOnDone: params.closeTabOnDone,
+        });
+      case "inject_hud":
+        return this.injectHud(Boolean(params.toggle), params.urlPattern);
       case "reload_extension":
-        return { ok: true, message: "CDP không sử dụng Chrome Extension nên không cần reload." };
+        this.preloadedTabIds.clear();
+        const count = await this.preloadCoreOnAllTabs();
+        return {
+          ok: true,
+          message: `Đã nạp lại Otter Page-Agent Core (${OTTER_CORE_VERSION}) vào ${count} tab Chrome CDP (không cần Extension).`,
+        };
       default:
         throw new Error(`Hành động '${action}' chưa được hỗ trợ bởi CDP Bridge.`);
     }
@@ -756,4 +1145,3 @@ export class CdpBridge {
 }
 
 export const cdpBridge = new CdpBridge();
-

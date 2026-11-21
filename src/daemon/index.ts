@@ -9,7 +9,7 @@ import { enqueueInjection, flushInjectionOutbox, markInjectionDelivered, markInj
 import { recordTurn, stopPageLoop } from "./page-loop";
 import { touchLease } from "./page-loop-lease";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { activeSockets, browserBridge } from "./browser-bridge";
+import { activeSockets, browserBridge, cdpBridge } from "./browser-bridge";
 import { getSessionsForConversation, appendTerminalOutput } from "./terminal";
 import {
   initMcpGateway,
@@ -836,3 +836,8 @@ if (shouldStartTunnel) {
 registerBeforeRestartHook(() => server.stop(true));
 cleanupAfterUpdate();
 startUpdateScheduler(handleMcpActivity);
+
+// Nạp sẵn Otter Page-Agent Core vào các tab Chrome CDP nếu cổng CDP đang mở (không cần Extension)
+void cdpBridge.isAvailable().then((ok) => {
+  if (ok) void cdpBridge.preloadCoreOnAllTabs();
+}).catch(() => {});

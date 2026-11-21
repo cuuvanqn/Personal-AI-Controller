@@ -54,7 +54,7 @@ export default function App({
             logo={<OtterMark size={24} />}
             heading="Otter"
             headingHref="#/"
-            headerEndContent={<Badge variant="neutral" label="v2.1 · MIT" />}
+            headerEndContent={<Badge variant="neutral" label={`v${__OTTER_VERSION__} · MIT`} />}
           />
         }
         startContent={
