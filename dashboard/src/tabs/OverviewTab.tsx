@@ -43,7 +43,8 @@ export default function OverviewTab({
   onRefresh,
 }: Props) {
   const [doctorResult, setDoctorResult] = useState<string | null>(null);
-  const origin = window.location.origin;
+  const tunnelOrigin = tunnel?.url ? tunnel.url.replace(/\/+$/, "") : null;
+  const endpointBase = tunnelOrigin || window.location.origin;
 
   return (
     <VStack gap={6}>
@@ -187,7 +188,7 @@ export default function OverviewTab({
                       label="Mở Tunnel"
                       variant="primary"
                       size="sm"
-                      onClick={() => window.open(tunnel.url!, "_blank", "noopener")}
+                      onClick={() => window.open(`${tunnelOrigin}/dashboard`, "_blank", "noopener")}
                     />
                     <Button
                       label="Sao chép MCP"
@@ -279,14 +280,20 @@ export default function OverviewTab({
 
       {/* Điểm cuối kết nối */}
       <VStack gap={3}>
-        <Heading level={2}>Điểm cuối kết nối</Heading>
+        <HStack justify="between" align="center" gap={2} wrap="wrap">
+          <Heading level={2}>Điểm cuối kết nối</Heading>
+          <Badge
+            variant={tunnelOrigin ? "success" : "neutral"}
+            label={tunnelOrigin ? "Đang dùng domain Quick Tunnel" : "Cục bộ (chưa bật Tunnel)"}
+          />
+        </HStack>
         <Card padding={0}>
           <List hasDividers edge="bleed">
             {[
-              { label: "MCP Streamable HTTP", url: `${origin}/mcp` },
-              { label: "MCP SSE (Tương thích ngược)", url: `${origin}/sse` },
-              { label: "OpenAPI Schema", url: `${origin}/openapi.json` },
-              { label: "Plan Dashboard (Standalone)", url: `${origin}/plan-dashboard` },
+              { label: "MCP Streamable HTTP", url: `${endpointBase}/mcp` },
+              { label: "MCP SSE (Tương thích ngược)", url: `${endpointBase}/sse` },
+              { label: "OpenAPI Schema", url: `${endpointBase}/openapi.json` },
+              { label: "Plan Dashboard (Standalone)", url: `${endpointBase}/plan-dashboard` },
             ].map((ep) => (
               <ListItem
                 key={ep.label}

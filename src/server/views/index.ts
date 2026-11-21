@@ -63,8 +63,8 @@ export function renderAdminDashboard(db: Database, port: number, adminUser: stri
   try {
     versionsList = db.query("SELECT * FROM app_versions").all() as any[];
   } catch {}
-  const daemonVer = versionsList.find((v) => v.component === "daemon")?.version || "2.2.1";
-  const extVer = versionsList.find((v) => v.component === "extension")?.version || "2.2.1";
+  const daemonVer = versionsList.find((v) => v.component === "daemon")?.version || "2.2.2";
+  const extVer = versionsList.find((v) => v.component === "extension")?.version || "2.2.2";
 
   const initialPayload = JSON.stringify({
     stats,
