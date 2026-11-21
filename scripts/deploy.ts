@@ -55,6 +55,10 @@ try {
   console.warn(`[!] Không thể nén zip tự động: ${err.message}`);
 }
 
+// 2.5 Build & nhúng Dashboard (React + Astryx) vào binary otter trước khi biên dịch
+console.log("\n[1.5/4] Đang build & nhúng Dashboard vào binary Otter...");
+execSync("bun scripts/build-dashboard.ts", { stdio: "inherit", cwd: rootDir });
+
 // 3. Biên dịch Standalone Binaries (Windows & macOS)
 console.log("\n[2/4] Đang biên dịch Standalone Binaries (Windows, macOS ARM64 & Intel)...");
 

@@ -10,6 +10,7 @@ import { getLicenseStatus, activateLicense } from "../license";
 import { activateOnline, DEFAULT_LICENSE_SERVER_URL } from "../license/hybrid-client";
 import { getQuickTunnelStatus, startQuickTunnel, stopQuickTunnel, openTunnelInBrowser } from "../tunnel";
 import { matchDaemonRoute } from "./lcg-routes";
+import { EMBEDDED_DASHBOARD_ASSETS } from "../dashboard-assets.generated";
 
 export async function handleSystemRoutes(req: Request, url: URL, port: number): Promise<Response | null> {
   // -1. Public Health Check Endpoint
@@ -253,15 +254,15 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
     });
   }
 
-  // 5.5 Dashboard mới (React + Astryx) — phục vụ bản build tĩnh trong deploy/dashboard/
-  //     (build từ thư mục dashboard/: npm run build rồi copy dist/ sang deploy/dashboard/).
-  //     Nếu chưa có bản build thì rơi xuống Dashboard HTML inline cũ ở mục 6.
+  // 5.5 Dashboard mới (React + Astryx) — ưu tiên file rời deploy/dashboard/ (dev),
+  //     không có thì phục vụ trực tiếp từ asset đã nhúng sẵn trong binary otter.
+  //     Nếu cả hai đều trống thì rơi xuống Dashboard HTML inline cũ ở mục 6.
   if (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) {
     const rel = url.pathname === "/dashboard" || url.pathname === "/dashboard/"
       ? "index.html"
       : url.pathname.slice("/dashboard/".length);
-    // Chặn path traversal: chỉ phục vụ file nằm trong deploy/dashboard/
-    if (rel && !rel.includes("..")) {
+    // Chặn path traversal: chỉ phục vụ file tương đối an toàn
+    if (rel && !rel.includes("..") && !rel.startsWith("/") && !rel.includes("\\")) {
       const dashPath = path.join(process.cwd(), "deploy", "dashboard", rel);
       const dashFile = Bun.file(dashPath);
       if (await dashFile.exists()) {
@@ -276,6 +277,35 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
                             ext === ".woff2" ? "font/woff2" : "application/octet-stream";
         return new Response(dashFile, {
           headers: { "Content-Type": contentType, ...corsHeaders }
+        });
+      }
+
+      const embedded = Object.prototype.hasOwnProperty.call(EMBEDDED_DASHBOARD_ASSETS, rel)
+        ? EMBEDDED_DASHBOARD_ASSETS[rel]
+        : undefined;
+      if (embedded) {
+        const gzBytes = Uint8Array.from(Buffer.from(embedded.gzipBase64, "base64"));
+        const cacheControl = rel.startsWith("assets/")
+          ? "public, max-age=31536000, immutable"
+          : "no-cache";
+        const acceptsGzip = (req.headers.get("accept-encoding") || "").toLowerCase().includes("gzip");
+        if (acceptsGzip) {
+          return new Response(gzBytes, {
+            headers: {
+              "Content-Type": embedded.contentType,
+              "Content-Encoding": "gzip",
+              "Vary": "Accept-Encoding",
+              "Cache-Control": cacheControl,
+              ...corsHeaders
+            }
+          });
+        }
+        return new Response(Bun.gunzipSync(gzBytes), {
+          headers: {
+            "Content-Type": embedded.contentType,
+            "Cache-Control": cacheControl,
+            ...corsHeaders
+          }
         });
       }
     }
