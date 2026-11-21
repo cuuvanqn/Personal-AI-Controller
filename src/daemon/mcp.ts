@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { OTTER_VERSION } from "./version";
 import { registerExternalToolsToMcpServer } from "./mcp-gateway";
 import {
   captureToolRegistrations,
@@ -45,7 +46,7 @@ import {
 export function createMcpServer(onActivity?: (event: any) => void): McpServer {
   const mcp = new McpServer({
     name: "Otter",
-    version: "2.1.0"
+    version: OTTER_VERSION
   });
 
   // Tool hệ thống bật/tắt nhóm MCP (tool_groups_list/set): đăng ký TRƯỚC

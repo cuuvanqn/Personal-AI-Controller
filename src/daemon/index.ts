@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { getTailscaleIp, ensureAuthToken } from "./security";
 import { initDatabase } from "./db";
 import { createMcpServer } from "./mcp";
+import { cleanupAfterUpdate, startUpdateScheduler } from "./updater";
 import { recoverTaskQueue, sweepStaleBridgeTasks } from "./tools/task-bridge";
 import { enqueueInjection, flushInjectionOutbox, markInjectionDelivered, markInjectionFailed } from "./continuous-loop";
 import { recordTurn, stopPageLoop } from "./page-loop";
@@ -22,6 +23,7 @@ import {
   handleSystemRoutes,
   handleMcpRoutes,
   handleToolGroupsRoutes,
+  handleUpdateRoutes,
   handleConversationRoutes,
   handleActivityRoutes,
   handleSkillsRoutes,
@@ -586,6 +588,9 @@ const server = Bun.serve<WsClientData>({
     const toolGroupsRes = await handleToolGroupsRoutes(req, url);
     if (toolGroupsRes) return toolGroupsRes;
 
+    const updateRes = await handleUpdateRoutes(req, url);
+    if (updateRes) return updateRes;
+
     const convRes = await handleConversationRoutes(req, url, db, broadcast);
     if (convRes) return convRes;
 
@@ -887,12 +892,7 @@ if (shouldStartTunnel) {
   });
 }
 
-// Kiểm tra cập nhật phiên bản mới ngầm (Non-blocking)
-fetch("https://license.gpt.io.vn/api/version?component=daemon&client_version=2.0.0", {
-  signal: AbortSignal.timeout(3000)
-}).then(r => r.json()).then(data => {
-  if (data?.update_available) {
-    console.log(`\n🎉 [Otter Update] Đã có phiên bản daemon mới: v${data.version}!`);
-    console.log(`👉 Tải cập nhật tại: ${data.download_url}\n`);
-  }
-}).catch(() => {});
+// Tự cập nhật daemon: dọn marker sau lần cập nhật trước + lịch kiểm tra
+// phiên bản mới (bản bắt buộc tự áp dụng; OTTER_AUTO_UPDATE=1 để tự áp dụng mọi bản).
+cleanupAfterUpdate();
+startUpdateScheduler(handleMcpActivity);

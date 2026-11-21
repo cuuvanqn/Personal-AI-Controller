@@ -503,6 +503,9 @@
         <label>Nội dung cập nhật / Tính năng mới (Changelog):</label>
         <input type="text" id="ver_changelog" placeholder="VD: Sửa lỗi giao diện, thêm tính năng tự động..." value="Tối ưu giao diện, sửa lỗi layout di động và nâng cấp thuật toán Agentic">
 
+        <label>SHA256 của file tải (để daemon xác minh khi tự cập nhật, có thể bỏ trống):</label>
+        <input type="text" id="ver_sha256" placeholder="VD: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855">
+
         <button type="submit" style="background: linear-gradient(135deg, #38bdf8, #2563eb); color: #fff;">📢 Phát Hành Phiên Bản Mới & Bật Gợi Ý Update Cho User</button>
       </form>
       <div id="versionResult" style="margin-top: 12px; display: none;"></div>
@@ -760,7 +763,8 @@
           component: document.getElementById('ver_component').value,
           version: document.getElementById('ver_version').value,
           download_url: document.getElementById('ver_download_url').value,
-          changelog: document.getElementById('ver_changelog').value
+          changelog: document.getElementById('ver_changelog').value,
+          sha256: document.getElementById('ver_sha256').value.trim()
         };
 
         const res = await fetch('/api/admin/version/update', {

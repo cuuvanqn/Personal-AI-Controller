@@ -145,6 +145,10 @@ export function initLicenseDatabase(dbPath?: string): Database {
     db.run("ALTER TABLE orders ADD COLUMN aff_code TEXT");
   } catch {}
 
+  try {
+    db.run("ALTER TABLE app_versions ADD COLUMN sha256 TEXT");
+  } catch {}
+
   // Khởi tạo phiên bản mặc định ban đầu nếu chưa có
   try {
     const ext = db.query("SELECT * FROM app_versions WHERE component = 'extension'").get();
@@ -1035,6 +1039,7 @@ export function startLicenseServer(port: number = Number(process.env.LICENSE_SER
           mandatory: isMandatory,
           min_supported_version: verRecord.min_supported_version,
           download_url: verRecord.download_url,
+          sha256: verRecord.sha256 || null,
           changelog: verRecord.changelog,
           release_date: verRecord.release_date
         }, { headers: corsHeaders });
@@ -1259,6 +1264,10 @@ export function startLicenseServer(port: number = Number(process.env.LICENSE_SER
           const downloadUrl = String(body.download_url || "").trim();
           const changelog = String(body.changelog || "").trim();
           const minSupportedVersion = String(body.min_supported_version || version).trim();
+          const sha256 = String(body.sha256 || "").trim().toLowerCase();
+          if (sha256 && !/^[0-9a-f]{64}$/.test(sha256)) {
+            return await respond({ success: false, error: "SHA256 không hợp lệ (cần 64 ký tự hex)" }, isEncrypted, 400);
+          }
 
           if (!version) {
             return await respond({ success: false, error: "Vui lòng nhập phiên bản (ví dụ: 2.1.0)" }, isEncrypted, 400);
@@ -1266,16 +1275,17 @@ export function startLicenseServer(port: number = Number(process.env.LICENSE_SER
 
           const now = new Date().toISOString();
           db.run(
-            `INSERT INTO app_versions (component, version, min_supported_version, download_url, changelog, release_date, updated_at)
-             VALUES (?, ?, ?, ?, ?, date('now'), ?)
+            `INSERT INTO app_versions (component, version, min_supported_version, download_url, changelog, release_date, updated_at, sha256)
+             VALUES (?, ?, ?, ?, ?, date('now'), ?, ?)
              ON CONFLICT(component) DO UPDATE SET
                version = excluded.version,
                min_supported_version = excluded.min_supported_version,
                download_url = excluded.download_url,
                changelog = excluded.changelog,
                release_date = date('now'),
-               updated_at = excluded.updated_at`,
-            [component, version, minSupportedVersion, downloadUrl, changelog, now]
+               updated_at = excluded.updated_at,
+               sha256 = excluded.sha256`,
+            [component, version, minSupportedVersion, downloadUrl, changelog, now, sha256 || null]
           );
 
           return await respond({

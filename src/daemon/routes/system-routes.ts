@@ -368,6 +368,15 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
             <div id="tg-list"></div>
           </div>
 
+          <div class="tg-box">
+            <h4 style="margin:0 0 6px 0; color:#e2e8f0;" data-i18n="upd_heading">⬆️ Cập Nhật Daemon</h4>
+            <div class="tg-summary" id="upd-summary">…</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+              <button class="tg-preset" onclick="checkUpdateNow()" data-i18n="upd_check">Kiểm tra cập nhật</button>
+              <button class="tg-preset" id="upd-apply" onclick="applyUpdateNow()" data-i18n="upd_apply" style="display:none; background:#059669; color:#fff;">Cập nhật ngay</button>
+            </div>
+          </div>
+
           <p><strong data-i18n="endpoints_title">Điểm cuối kết nối (Endpoints):</strong></p>
           <pre>SSE: /sse&#10;Streamable HTTP: /mcp&#10;WebSocket: ws://${url.host}/api/activity/v1/stream</pre>
           <p><span data-i18n="openapi_label">Tài liệu OpenAPI:</span> <a href="/openapi.json" target="_blank">/openapi.json</a></p>
@@ -405,6 +414,9 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               tg_preset_minimal: "Tối thiểu",
               tg_preset_code: "Chỉ Code",
               tg_preset_fb: "Chỉ Facebook",
+              upd_heading: "⬆️ Cập Nhật Daemon",
+              upd_check: "Kiểm tra cập nhật",
+              upd_apply: "Cập nhật ngay",
               endpoints_title: "Điểm cuối kết nối (Endpoints):",
               openapi_label: "Tài liệu OpenAPI:"
             },
@@ -438,6 +450,9 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               tg_preset_minimal: "Minimal",
               tg_preset_code: "Code only",
               tg_preset_fb: "Facebook only",
+              upd_heading: "⬆️ Daemon Updates",
+              upd_check: "Check for updates",
+              upd_apply: "Update now",
               endpoints_title: "Connection Endpoints:",
               openapi_label: "OpenAPI Documentation:"
             }
@@ -532,9 +547,46 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
             tgRender();
           }
 
+          function updRender(st) {
+            var box = document.getElementById('upd-summary');
+            var applyBtn = document.getElementById('upd-apply');
+            if (!box) return;
+            var en = tgLang() === 'en';
+            var html = (en ? 'Current version: <strong>v' : 'Phiên bản hiện tại: <strong>v') + st.currentVersion + '</strong>';
+            if (st.updateAvailable && st.latestVersion) {
+              html += (en ? ' · New version: <strong>v' : ' · Bản mới: <strong>v') + st.latestVersion + '</strong>';
+              if (st.mandatory) html += en ? ' (mandatory)' : ' (bắt buộc)';
+              if (st.changelog) html += '<br><span style="color:#94a3b8;">' + st.changelog + '</span>';
+              if (applyBtn) applyBtn.style.display = st.isCompiledBinary ? '' : 'none';
+              if (!st.isCompiledBinary) html += '<br><span style="color:#f59e0b;">' + (en ? 'Dev build: update via git pull / build:exe.' : 'Bản dev: cập nhật bằng git pull / build:exe.') + '</span>';
+            } else if (st.lastCheckedAt) {
+              html += en ? ' · You are on the latest version.' : ' · Bạn đang dùng bản mới nhất.';
+              if (applyBtn) applyBtn.style.display = 'none';
+            }
+            if (st.autoUpdateEnabled) html += '<br><span style="color:#94a3b8;">' + (en ? 'Auto-update: ON (OTTER_AUTO_UPDATE=1)' : 'Tự động cập nhật: BẬT (OTTER_AUTO_UPDATE=1)') + '</span>';
+            if (st.lastError) html += '<br><span style="color:#f87171;">' + (en ? 'Last check failed: ' : 'Lần kiểm tra gần nhất lỗi: ') + st.lastError + '</span>';
+            box.innerHTML = html;
+          }
+          function loadUpdateStatus() {
+            fetch('/api/update/status').then(function(r) { return r.json(); }).then(function(st) { updRender(st); }).catch(function() {});
+          }
+          function checkUpdateNow() {
+            var box = document.getElementById('upd-summary');
+            if (box) box.innerHTML = tgLang() === 'en' ? 'Checking…' : 'Đang kiểm tra…';
+            fetch('/api/update/check', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(st) { updRender(st); }).catch(function(e) { alert(e.message); loadUpdateStatus(); });
+          }
+          function applyUpdateNow() {
+            if (!confirm(tgLang() === 'en' ? 'Download and install the update now? The daemon will restart.' : 'Tải và cài bản cập nhật ngay? Daemon sẽ khởi động lại.')) return;
+            fetch('/api/update/apply', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(res) {
+              alert(res.message || res.error || 'OK');
+              setTimeout(function() { location.reload(); }, 4000);
+            }).catch(function(e) { alert(e.message); });
+          }
+
           const savedLang = localStorage.getItem("otter_lang") || (navigator.language.startsWith("vi") ? "vi" : "en");
           setLang(savedLang);
           loadToolGroups();
+          loadUpdateStatus();
         </script>
       </body>
       </html>
