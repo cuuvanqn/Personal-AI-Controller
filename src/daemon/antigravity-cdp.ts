@@ -465,6 +465,9 @@ export class AntigravityLauncher {
       );
     }
     const args = [`--remote-debugging-port=${port}`];
+    if (opts.userDataDir) {
+      args.push(`--user-data-dir=${opts.userDataDir}`);
+    }
     let cmd = binary;
     let spawnArgs = args;
     if (process.platform === "linux") {
