@@ -23,7 +23,31 @@ flowchart TD
 
 ---
 
-## 2. Khởi động Chrome với các cờ (flags) bắt buộc
+## 1.5. Kết nối trực tiếp vào Chrome mặc định (Chrome 144+ — Giữ nguyên tài khoản đã đăng nhập, không cần Extension)
+
+Từ **Chrome 136 trở lên**, Google Chrome **chặn cờ `--remote-debugging-port`** trên thư mục `User Data` mặc định (`%LOCALAPPDATA%\Google\Chrome\User Data` trên Windows) nhằm bảo vệ cookie đăng nhập. Vì vậy nếu chỉ chạy `chrome.exe --remote-debugging-port=9222` vào profile `Default`, Chrome sẽ bỏ qua cổng 9222.
+
+Từ **Chrome 144+**, Chrome cung cấp cơ chế cấp quyền chính thức thông qua file `DevToolsActivePort`, và **Otter CDP đã hỗ trợ sẵn tự động**:
+
+### Các bước bật (chỉ cần làm 1 lần, ~5 giây):
+1. Mở **Google Chrome mặc định** (profile đang đăng nhập sẵn Facebook, ChatGPT, Gmail,...).
+2. Mở một tab mới và truy cập địa chỉ:
+   ```text
+   chrome://inspect/#remote-debugging
+   ```
+3. Gạt **ON** mục **Allow remote debugging for this browser**.
+   - Chrome sẽ tự tạo file `DevToolsActivePort` trong thư mục `User Data` (chứa cổng lắng nghe và đường dẫn `/devtools/browser/<guid>`).
+4. Khi Otter gửi lệnh điều khiển trình duyệt lần đầu, Chrome sẽ hiện hộp thoại xác nhận → bấm **Allow** **1 lần duy nhất**.
+
+### Cơ chế hoạt động trong Otter (`src/daemon/cdp-bridge.ts`):
+- Otter tự động phát hiện `DevToolsActivePort`, mở **1 kết nối Browser-level WebSocket duy nhất** và dùng `Target.attachToTarget({ flatten: true })` để điều khiển nhiều tab song song — nhờ đó Chrome **không hỏi lại hộp thoại Allow** ở các lệnh sau.
+- Otter tự động nạp lõi **Page-Agent Core (`window.__otterCore`)** vào mọi tab qua `Page.addScriptToEvaluateOnNewDocument` (kèm click phần cứng `isTrusted: true` và `DOM.setFileInputFiles`), **không cần cài Chrome Extension**.
+- Nếu bạn tắt công tắc trên, Otter tự động fallback sang profile CDP riêng (`~/.otter/cdp-profile` ở cổng `9222`) hoặc GPM Login.
+- Có thể ép bỏ qua Chrome mặc định bằng biến môi trường `OTTER_CDP_USE_DEFAULT_CHROME=0`.
+
+---
+
+## 2. Khởi động Chrome với các cờ (flags) bắt buộc (Profile riêng / CDP :9222)
 
 Để Chrome chấp nhận kết nối điều khiển bên ngoài và không bị xung đột với các phiên làm việc hiện có, cần truyền các đối số dòng lệnh sau:
 

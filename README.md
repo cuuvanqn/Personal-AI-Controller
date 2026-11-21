@@ -247,12 +247,12 @@ cp .env.example .env
 bun run dev
 ```
 
-#### 🚀 Dual-Engine Browser Automation (Extension + CDP 2ms):
-- **Extension Mode**: Runs on standard Chrome/Brave/Edge via `extension/dist`.
-- **CDP Mode (Chrome DevTools Protocol)**: 2ms ultra-low latency direct browser control.
-  - Standard Chrome: `chrome.exe --remote-debugging-port=9222`
-  - Antidetect browsers (GPM Login, AdsPower, MoreLogin): Enable remote debugging port 9222.
-  - Otter automatically detects and routes commands to the fastest available engine.
+#### 🚀 Dual-Engine Browser Automation (CDP Auto-Core + Optional Extension):
+- **Default Chrome Mode (Chrome 144+, Recommended — No Extension Needed)**: Control your existing logged-in Chrome (`Default` profile with Facebook/ChatGPT/etc. already signed in):
+  1. Open `chrome://inspect/#remote-debugging` in your regular Chrome and turn **ON** *"Allow remote debugging for this browser"*.
+  2. Click **Allow** once when Otter connects. Otter reads `DevToolsActivePort`, reuses a single persistent browser WebSocket (`flatten: true`), and auto-preloads `window.__otterCore` into every tab.
+- **Isolated CDP Mode (Port 9222 / GPM Login)**: Automatically falls back to `~/.otter/cdp-profile` (`--remote-debugging-port=9222`) or antidetect browsers (GPM Login, AdsPower, MoreLogin) with 2ms latency.
+- **Extension Mode (Optional)**: Runs on Chrome/Brave/Edge via `extension/dist` if you want the floating ChatGPT HUD.
 
 ---
 

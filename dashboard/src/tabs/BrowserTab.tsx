@@ -11,6 +11,7 @@ import { List, ListItem } from "@astryxdesign/core/List";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Banner } from "@astryxdesign/core/Banner";
 import { PageHeader } from "../components/PageHeader";
 import { apiGet, apiPost, type BrowserEngineInfo, type ChromeProfileItem } from "../api";
 
@@ -51,6 +52,32 @@ export default function BrowserTab({ busy, act }: Props) {
         description="Quản lý động cơ điều khiển trình duyệt (CDP mặc định / Extension phụ) và mở nhanh Chrome Profiles."
         actions={
           <Button label="Làm mới" size="sm" variant="secondary" onClick={() => void loadAll()} />
+        }
+      />
+
+      <Banner
+        status="info"
+        title="Kết nối trực tiếp Chrome mặc định (Chrome 144+, không cần Extension)"
+        description={
+          <Text type="supporting">
+            1) Mở <span className="dash-mono">chrome://inspect/#remote-debugging</span> trên Chrome đang đăng nhập sẵn tài khoản (Facebook, ChatGPT…) → bật <strong>ON</strong> mục <em>Allow remote debugging for this browser</em>. 2) Khi Otter kết nối lần đầu, bấm <strong>Allow</strong> 1 lần duy nhất (Otter tự đọc <span className="dash-mono">DevToolsActivePort</span> và giữ 1 phiên kết nối bền vững).
+          </Text>
+        }
+        endContent={
+          <Button
+            label="Sao chép link"
+            size="sm"
+            variant="secondary"
+            onClick={() =>
+              void act(
+                "copy-inspect-url",
+                async () => {
+                  await navigator.clipboard.writeText("chrome://inspect/#remote-debugging");
+                },
+                "Đã sao chép chrome://inspect/#remote-debugging — hãy dán vào thanh địa chỉ Chrome."
+              )
+            }
+          />
         }
       />
 

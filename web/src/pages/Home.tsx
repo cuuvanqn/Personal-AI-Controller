@@ -251,7 +251,11 @@ const FAQS: Array<{ q: string; a: string }> = [
   },
   {
     q: "Tôi có bắt buộc phải cài tiện ích Chrome không?",
-    a: "Không bắt buộc. Otter mặc định điều khiển trình duyệt thông qua Chrome DevTools Protocol (CDP). Tiện ích Chrome chỉ là tùy chọn phụ nếu bạn muốn thanh HUD nổi ngay trên trang ChatGPT.",
+    a: "Không bắt buộc. Otter mặc định điều khiển trình duyệt qua Chrome DevTools Protocol (CDP) và tự nạp sẵn lõi Page-Agent vào mọi tab. Tiện ích Chrome chỉ là tùy chọn phụ nếu bạn muốn thanh HUD nổi ngay trên trang ChatGPT.",
+  },
+  {
+    q: "Làm sao cho Otter điều khiển Chrome mặc định đang đăng nhập sẵn Facebook/ChatGPT?",
+    a: "Từ Chrome 144+, bạn chỉ cần mở tab mới vào địa chỉ chrome://inspect/#remote-debugging rồi bật ON mục 'Allow remote debugging for this browser'. Khi Otter kết nối lần đầu, bấm Allow 1 lần duy nhất — Otter tự đọc DevToolsActivePort, giữ 1 phiên WebSocket bền vững và dùng ngay các tài khoản bạn đã đăng nhập mà không cần cài Extension.",
   },
   {
     q: "Otter kết nối được với những AI nào?",
