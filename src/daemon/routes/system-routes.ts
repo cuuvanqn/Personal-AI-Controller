@@ -282,6 +282,22 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
           button:hover { background: #2563eb; }
           .lang-btn { background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid #475569; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; }
           .lang-btn.active { background: #38bdf8; color: #0f172a; font-weight: bold; border-color: #38bdf8; }
+          .tg-box { background: #0b0f19; border: 1px solid #475569; border-radius: 12px; padding: 16px; margin: 18px 0; }
+          .tg-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e293b; }
+          .tg-row:last-child { border-bottom: none; }
+          .tg-info { flex: 1; min-width: 0; }
+          .tg-name { font-size: 14px; font-weight: 700; color: #f8fafc; }
+          .tg-desc { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+          .tg-meta { font-size: 12px; color: #38bdf8; white-space: nowrap; }
+          .tg-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+          .tg-switch input { opacity: 0; width: 0; height: 0; }
+          .tg-slider { position: absolute; cursor: pointer; inset: 0; background: #475569; border-radius: 9999px; transition: 0.2s; }
+          .tg-slider:before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+          .tg-switch input:checked + .tg-slider { background: #10b981; }
+          .tg-switch input:checked + .tg-slider:before { transform: translateX(20px); }
+          .tg-preset { background: #334155; padding: 6px 12px; font-size: 12px; }
+          .tg-summary { font-size: 13px; color: #cbd5e1; margin: 10px 0 4px; }
+          .tg-summary strong { color: #34d399; }
         </style>
       </head>
       <body>
@@ -339,6 +355,19 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
           <div class="feature">💬 <span data-i18n="f_community"><strong>Cộng đồng Facebook:</strong> <a href="https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr" target="_blank" style="color:#60a5fa; text-decoration:none;">Tham gia nhóm hỗ trợ Otter</a></span></div>
           <div class="feature">📖 <a href="/docs" target="_blank" style="color:#34d399; font-weight:700; text-decoration:none;">🌟 Xem Trang Giới Thiệu & Hướng Dẫn Sử Dụng (/docs) ➔</a></div>
 
+          <div class="tg-box">
+            <h4 style="margin:0 0 6px 0; color:#e2e8f0;" data-i18n="tg_heading">🧩 Nhóm MCP Tools (Bật/Tắt để nhẹ hơn)</h4>
+            <p style="margin:4px 0 10px; font-size:13px; color:#94a3b8;" data-i18n="tg_desc">Tắt các nhóm không dùng để giảm token schema nạp vào AI mỗi phiên. Thay đổi áp dụng ngay cho các phiên MCP đang kết nối.</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+              <button class="tg-preset" onclick="applyToolPreset('all')" data-i18n="tg_preset_all">Bật tất cả</button>
+              <button class="tg-preset" onclick="applyToolPreset('minimal')" data-i18n="tg_preset_minimal">Tối thiểu</button>
+              <button class="tg-preset" onclick="applyToolPreset('code')" data-i18n="tg_preset_code">Chỉ Code</button>
+              <button class="tg-preset" onclick="applyToolPreset('fb')" data-i18n="tg_preset_fb">Chỉ Facebook</button>
+            </div>
+            <div class="tg-summary" id="tg-summary">…</div>
+            <div id="tg-list"></div>
+          </div>
+
           <p><strong data-i18n="endpoints_title">Điểm cuối kết nối (Endpoints):</strong></p>
           <pre>SSE: /sse&#10;Streamable HTTP: /mcp&#10;WebSocket: ws://${url.host}/api/activity/v1/stream</pre>
           <p><span data-i18n="openapi_label">Tài liệu OpenAPI:</span> <a href="/openapi.json" target="_blank">/openapi.json</a></p>
@@ -370,6 +399,12 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               f_term: "<strong>Live Persistent Terminal:</strong> Tích hợp stream PTY và xterm liên tục",
               f_sub: "<strong>Continuous Mode:</strong> Phối hợp sub-agent liên tục không ngắt quãng",
               f_community: "<strong>Cộng đồng Facebook:</strong> <a href=\"https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr\" target=\"_blank\" style=\"color:#60a5fa; text-decoration:none;\">Tham gia nhóm hỗ trợ Otter</a>",
+              tg_heading: "🧩 Nhóm MCP Tools (Bật/Tắt để nhẹ hơn)",
+              tg_desc: "Tắt các nhóm không dùng để giảm token schema nạp vào AI mỗi phiên. Thay đổi áp dụng ngay cho các phiên MCP đang kết nối.",
+              tg_preset_all: "Bật tất cả",
+              tg_preset_minimal: "Tối thiểu",
+              tg_preset_code: "Chỉ Code",
+              tg_preset_fb: "Chỉ Facebook",
               endpoints_title: "Điểm cuối kết nối (Endpoints):",
               openapi_label: "Tài liệu OpenAPI:"
             },
@@ -397,6 +432,12 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               f_term: "<strong>Live Persistent Terminal:</strong> Continuous PTY streaming and xterm integration",
               f_sub: "<strong>Continuous Mode:</strong> Uninterrupted sub-agent coordination",
               f_community: "<strong>Facebook Community:</strong> <a href=\"https://www.facebook.com/share/g/1CN8sjFYDH/?mibextid=wwXIfr\" target=\"_blank\" style=\"color:#60a5fa; text-decoration:none;\">Join Otter Support Group</a>",
+              tg_heading: "🧩 MCP Tool Groups (Toggle for a lighter load)",
+              tg_desc: "Turn off unused groups to reduce schema tokens loaded into the AI each session. Changes apply immediately to connected MCP sessions.",
+              tg_preset_all: "Enable all",
+              tg_preset_minimal: "Minimal",
+              tg_preset_code: "Code only",
+              tg_preset_fb: "Facebook only",
               endpoints_title: "Connection Endpoints:",
               openapi_label: "OpenAPI Documentation:"
             }
@@ -413,6 +454,67 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
             }).catch(e => alert(e.message));
           }
 
+          var tgState = null;
+          function tgLang() { return document.documentElement.lang === 'en' ? 'en' : 'vi'; }
+          function tgRender() {
+            if (!tgState) return;
+            var lang = tgLang();
+            var list = document.getElementById('tg-list');
+            var summary = document.getElementById('tg-summary');
+            if (!list || !summary) return;
+            var html = '';
+            tgState.groups.forEach(function(g) {
+              var name = lang === 'en' ? g.nameEn : g.nameVi;
+              var desc = lang === 'en' ? g.descEn : g.descVi;
+              var meta = g.toolCount + ' tools · ~' + g.estTokens.toLocaleString() + ' tokens';
+              html += '<div class="tg-row">'
+                + '<div class="tg-info"><div class="tg-name">' + name + '</div>'
+                + '<div class="tg-desc">' + desc + '</div></div>'
+                + '<div class="tg-meta">' + meta + '</div>'
+                + '<label class="tg-switch"><input type="checkbox" ' + (g.enabled ? 'checked' : '')
+                + ' onchange="toggleToolGroup(\'' + g.id + '\', this.checked)">'
+                + '<span class="tg-slider"></span></label></div>';
+            });
+            list.innerHTML = html;
+            var saved = tgState.totalEstTokens - tgState.enabledEstTokens;
+            summary.innerHTML = (lang === 'en'
+              ? 'Enabled: <strong>' + tgState.enabledTools + '/' + tgState.totalTools + ' tools</strong> · ~' + tgState.enabledEstTokens.toLocaleString() + ' tokens (saved ~' + saved.toLocaleString() + ')'
+              : 'Đang bật: <strong>' + tgState.enabledTools + '/' + tgState.totalTools + ' tools</strong> · ~' + tgState.enabledEstTokens.toLocaleString() + ' tokens (đã giảm ~' + saved.toLocaleString() + ')');
+          }
+          function loadToolGroups() {
+            fetch('/api/tool-groups').then(function(r) { return r.json(); }).then(function(res) {
+              tgState = res;
+              tgRender();
+            }).catch(function(e) {
+              var summary = document.getElementById('tg-summary');
+              if (summary) summary.textContent = '⚠️ ' + e.message;
+            });
+          }
+          function toggleToolGroup(id, enabled) {
+            fetch('/api/tool-groups', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ group: id, enabled: enabled })
+            }).then(function(r) { return r.json(); }).then(function(res) {
+              tgState = res;
+              tgRender();
+            }).catch(function(e) { alert(e.message); loadToolGroups(); });
+          }
+          function applyToolPreset(preset) {
+            if (!tgState) return;
+            var keep = { all: null, minimal: ['core', 'browser'], code: ['core', 'code', 'agents', 'skills'], fb: ['core', 'browser', 'fb', 'meta'] }[preset];
+            var groups = {};
+            tgState.groups.forEach(function(g) { groups[g.id] = keep === null ? true : keep.indexOf(g.id) >= 0; });
+            fetch('/api/tool-groups', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ groups: groups })
+            }).then(function(r) { return r.json(); }).then(function(res) {
+              tgState = res;
+              tgRender();
+            }).catch(function(e) { alert(e.message); });
+          }
+
           function setLang(lang) {
             localStorage.setItem("otter_lang", lang);
             document.querySelectorAll(".lang-btn").forEach(b => b.classList.remove("active"));
@@ -427,10 +529,12 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               }
             });
             document.documentElement.lang = lang;
+            tgRender();
           }
 
           const savedLang = localStorage.getItem("otter_lang") || (navigator.language.startsWith("vi") ? "vi" : "en");
           setLang(savedLang);
+          loadToolGroups();
         </script>
       </body>
       </html>

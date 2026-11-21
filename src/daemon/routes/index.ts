@@ -2,6 +2,7 @@ export { corsHeaders, handleCorsPreflight, jsonResponse, errorResponse, checkAut
 export { handleA2aRoutes } from "./a2a-routes";
 export { handleSystemRoutes } from "./system-routes";
 export { handleMcpRoutes } from "./mcp-routes";
+export { handleToolGroupsRoutes } from "./tool-groups-routes";
 export { handleConversationRoutes } from "./conversation-routes";
 export { handleActivityRoutes } from "./activity-routes";
 export { handleSkillsRoutes } from "./skills-routes";

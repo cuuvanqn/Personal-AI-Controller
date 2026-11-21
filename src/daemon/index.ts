@@ -21,6 +21,7 @@ import {
   checkAuth,
   handleSystemRoutes,
   handleMcpRoutes,
+  handleToolGroupsRoutes,
   handleConversationRoutes,
   handleActivityRoutes,
   handleSkillsRoutes,
@@ -581,6 +582,9 @@ const server = Bun.serve<WsClientData>({
 
     const mcpRes = await handleMcpRoutes(req, url, handleMcpActivity);
     if (mcpRes) return mcpRes;
+
+    const toolGroupsRes = await handleToolGroupsRoutes(req, url);
+    if (toolGroupsRes) return toolGroupsRes;
 
     const convRes = await handleConversationRoutes(req, url, db, broadcast);
     if (convRes) return convRes;
