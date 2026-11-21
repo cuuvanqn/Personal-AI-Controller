@@ -171,6 +171,58 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
     }
   });
 
+  test("isAvailable and ensureProfileRunning NEVER auto-start GPM Login profiles", async () => {
+    const startCalls: string[] = [];
+    const mockGpm = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.startsWith("/api/v1/profiles/start/")) {
+          startCalls.push(url.pathname);
+          return Response.json({ success: true, data: { remote_debugging_port: 59991 } });
+        }
+        if (url.pathname === "/api/v1/profiles") {
+          return Response.json({
+            success: true,
+            data: {
+              total: 2,
+              data: [
+                { id: "prof-1", name: "Profile 1" },
+                { id: "prof-2", name: "Profile 2" },
+              ],
+            },
+          });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    const prevGpmPort = process.env.OTTER_GPM_PORT;
+    const prevGpmProf = process.env.OTTER_GPM_PROFILE_ID;
+    const prevUseDef = process.env.OTTER_CDP_USE_DEFAULT_CHROME;
+    const tmpEmptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "otter-no-active-port-"));
+    try {
+      process.env.OTTER_GPM_PORT = String(mockGpm.port);
+      delete process.env.OTTER_GPM_PROFILE_ID;
+      process.env.OTTER_CDP_USE_DEFAULT_CHROME = "0";
+
+      const bridge = new CdpBridge(59998, tmpEmptyDir);
+      expect(await bridge.isAvailable()).toBe(false);
+      expect(await bridge.ensureProfileRunning()).toBe(false);
+      expect(startCalls).toEqual([]);
+    } finally {
+      mockGpm.stop(true);
+      fs.rmSync(tmpEmptyDir, { recursive: true, force: true });
+      if (prevGpmPort === undefined) delete process.env.OTTER_GPM_PORT;
+      else process.env.OTTER_GPM_PORT = prevGpmPort;
+      if (prevGpmProf === undefined) delete process.env.OTTER_GPM_PROFILE_ID;
+      else process.env.OTTER_GPM_PROFILE_ID = prevGpmProf;
+      if (prevUseDef === undefined) delete process.env.OTTER_CDP_USE_DEFAULT_CHROME;
+      else process.env.OTTER_CDP_USE_DEFAULT_CHROME = prevUseDef;
+    }
+  });
+
   test("isFacebookPostMismatch detects home/profile redirect vs real post URL", () => {
     expect(
       isFacebookPostMismatch("https://www.facebook.com/", "https://www.facebook.com/share/p/17tu5cAG8h/")

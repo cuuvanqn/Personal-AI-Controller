@@ -1,6 +1,7 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const GPM_LOGIN_API_BASE = process.env.GPM_API_BASE || "http://127.0.0.1:9495/api/v1";
+export const GPM_LOGIN_API_BASE = process.env.GPM_API_BASE || `http://127.0.0.1:${process.env.OTTER_GPM_PORT || 9495}/api/v1`;
 export const GPM_AUTOMATE_MCP_URL = process.env.GPM_AUTOMATE_MCP_URL || "http://127.0.0.1:19977/mcp";
 
 export interface GpmProfileItem {
@@ -114,7 +115,7 @@ export async function listGpmProfiles(page = 1, pageSize = 50, search = ""): Pro
 }
 
 /**
- * Khởi động profile GPM Login kèm cổng CDP và nạp extension Otter
+ * Khởi động profile GPM Login kèm cổng CDP (tự nạp extension Otter nếu thư mục tồn tại)
  */
 export async function startGpmProfile(
   id: string,
@@ -122,6 +123,7 @@ export async function startGpmProfile(
     additionArgs?: string;
     loadOtterExtension?: boolean;
     skipProxyCheck?: boolean;
+    remoteDebuggingPort?: number;
   }
 ): Promise<{
   success: boolean;
@@ -134,12 +136,21 @@ export async function startGpmProfile(
   if (options?.skipProxyCheck !== false) {
     query.set("skip_proxy_check", "true");
   }
+  if (options?.remoteDebuggingPort && Number.isFinite(options.remoteDebuggingPort)) {
+    query.set("remote_debugging_port", String(options.remoteDebuggingPort));
+  }
 
   let additionArgs = options?.additionArgs || "";
   if (options?.loadOtterExtension !== false) {
-    const extDist = path.resolve("extension/dist");
-    const loadArg = `--load-extension="${extDist}"`;
-    additionArgs = additionArgs ? `${additionArgs} ${loadArg}` : loadArg;
+    const extCandidates = [
+      path.resolve("extension/dist"),
+      ...(process.env.LOCALAPPDATA ? [path.join(process.env.LOCALAPPDATA, "Otter", "extension")] : []),
+    ];
+    const extDist = extCandidates.find((p) => fs.existsSync(path.join(p, "manifest.json")));
+    if (extDist) {
+      const loadArg = `--load-extension="${extDist}"`;
+      additionArgs = additionArgs ? `${additionArgs} ${loadArg}` : loadArg;
+    }
   }
   if (additionArgs) {
     query.set("addition_args", additionArgs);
