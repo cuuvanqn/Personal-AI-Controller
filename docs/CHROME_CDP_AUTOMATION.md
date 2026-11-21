@@ -42,8 +42,10 @@ Từ **Chrome 144+**, Chrome cung cấp cơ chế cấp quyền chính thức th
 ### Cơ chế hoạt động trong Otter (`src/daemon/cdp-bridge.ts`):
 - Otter tự động phát hiện `DevToolsActivePort`, mở **1 kết nối Browser-level WebSocket duy nhất** và dùng `Target.attachToTarget({ flatten: true })` để điều khiển nhiều tab song song — nhờ đó Chrome **không hỏi lại hộp thoại Allow** ở các lệnh sau.
 - Otter tự động nạp lõi **Page-Agent Core (`window.__otterCore`)** vào mọi tab qua `Page.addScriptToEvaluateOnNewDocument` (kèm click phần cứng `isTrusted: true` và `DOM.setFileInputFiles`), **không cần cài Chrome Extension**.
+- Hỗ trợ DevTools Command Line API (`includeCommandLineAPI: true` trong `evaluate_js`), cho phép AI đọc trực tiếp phần tử bạn đang chọn trong bảng **Elements** (`$0`) khi gỡ lỗi kết hợp thủ công + AI.
 - Nếu bạn tắt công tắc trên, Otter tự động fallback sang profile CDP riêng (`~/.otter/cdp-profile` ở cổng `9222`) hoặc GPM Login.
 - Có thể ép bỏ qua Chrome mặc định bằng biến môi trường `OTTER_CDP_USE_DEFAULT_CHROME=0`.
+- Tài liệu chính thức từ Google Chrome: [Cho phép Coding Agent gỡ lỗi phiên trình duyệt của bạn (Chrome 144+)](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session?hl=vi).
 
 ---
 

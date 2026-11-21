@@ -93,7 +93,7 @@ export class CdpBridge {
 
   private getPreferredDefaultChromeInfo(port?: number): DevToolsActivePortInfo | null {
     if (port) return null;
-    if (process.env.OTTER_CDP_USE_DEFAULT_CHROME === "0") return null;
+    if (!this.defaultChromeUserDataDir && process.env.OTTER_CDP_USE_DEFAULT_CHROME === "0") return null;
     return readDefaultChromeActivePort(this.defaultChromeUserDataDir || process.env.OTTER_CHROME_USER_DATA_DIR);
   }
 
@@ -578,8 +578,18 @@ export class CdpBridge {
     return res?.result?.value;
   }
 
-  private async evalInSession(send: CdpSendFn, expression: string, awaitPromise = true, timeoutMs = 25000): Promise<any> {
-    const res = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise }, timeoutMs);
+  private async evalInSession(
+    send: CdpSendFn,
+    expression: string,
+    awaitPromise = true,
+    timeoutMs = 25000,
+    includeCommandLineAPI = false
+  ): Promise<any> {
+    const res = await send(
+      "Runtime.evaluate",
+      { expression, returnByValue: true, awaitPromise, ...(includeCommandLineAPI ? { includeCommandLineAPI: true } : {}) },
+      timeoutMs
+    );
     if (res?.exceptionDetails) {
       const desc = res.exceptionDetails.exception?.description || res.exceptionDetails.text;
       throw new Error(`Lỗi JS thực thi trên trang: ${desc}`);
@@ -1230,13 +1240,13 @@ export class CdpBridge {
   }
 
   /**
-   * Thực thi JS tùy ý trên tab CDP
+   * Thực thi JS tùy ý trên tab CDP (bật includeCommandLineAPI để hỗ trợ $0/$1/$$ khi đang mở DevTools)
    */
   async evaluateOnTab(script: string, urlPattern?: string, port?: number): Promise<any> {
     const tab = await this.findTargetTab(urlPattern, port);
     return this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
-      const value = await this.evalInSession(send, script, true, 25000);
+      const value = await this.evalInSession(send, script, true, 25000, true);
       return { ok: true, result: value, tabId: tab.id };
     });
   }

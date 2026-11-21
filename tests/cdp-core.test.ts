@@ -28,7 +28,7 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
   test("DevToolsActivePort browser-level WS reuses 1 persistent socket with flatten session multiplexing", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "otter-cdp-bws-"));
     let wsConnections = 0;
-    const seenMethods: Array<{ method: string; sessionId?: string }> = [];
+    const seenMethods: Array<{ method: string; sessionId?: string; includeCommandLineAPI?: boolean }> = [];
     let coreLoadedOnTab = false;
 
     const server = Bun.serve({
@@ -47,7 +47,11 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
         },
         message(ws, raw) {
           const msg = JSON.parse(String(raw));
-          seenMethods.push({ method: msg.method, sessionId: msg.sessionId });
+          seenMethods.push({
+            method: msg.method,
+            sessionId: msg.sessionId,
+            includeCommandLineAPI: msg.params?.includeCommandLineAPI,
+          });
 
           if (msg.method === "Target.getTargets") {
             ws.send(
@@ -143,6 +147,9 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
       expect(clicked.ok).toBe(true);
       expect(clicked.message).toContain("isTrusted");
 
+      const evalRes = await bridge.evaluateOnTab("$0?.tagName", "facebook.com");
+      expect(evalRes.ok).toBe(true);
+
       const switched = await bridge.switchTab("T-2");
       expect(switched.ok).toBe(true);
 
@@ -154,6 +161,7 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
       expect(seenMethods.some((m) => m.method === "Target.attachToTarget" && !m.sessionId)).toBe(true);
       expect(seenMethods.some((m) => m.method === "Page.addScriptToEvaluateOnNewDocument" && m.sessionId === "S-T-FB")).toBe(true);
       expect(seenMethods.some((m) => m.method === "Input.dispatchMouseEvent" && m.sessionId === "S-T-FB")).toBe(true);
+      expect(seenMethods.some((m) => m.method === "Runtime.evaluate" && m.includeCommandLineAPI === true)).toBe(true);
       expect(seenMethods.some((m) => m.method === "Target.activateTarget")).toBe(true);
       expect(seenMethods.some((m) => m.method === "Target.closeTarget")).toBe(true);
     } finally {
