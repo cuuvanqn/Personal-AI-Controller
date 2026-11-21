@@ -1,6 +1,6 @@
 {
   "name": "otter",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Otter — Agentic AI Desktop & Browser Controller built with Bun + TypeScript (Port 1993)",
   "license": "MIT",
   "author": "PHAM THANH NAM (@ptn1411)",
@@ -36,6 +36,7 @@
     "license:keygen": "bun src/daemon/license/keygen-tool.ts",
     "license:activate": "bun src/daemon/license/keygen-tool.ts --activate",
     "license:server": "bun src/server/license-server.ts",
+    "telemetry:server": "bun src/server/license-server.ts",
     "i18n:generate": "bun scripts/generate-i18n.ts",
     "i18n:check": "bun scripts/check-i18n.ts"
   },

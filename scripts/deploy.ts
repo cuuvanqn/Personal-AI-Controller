@@ -208,10 +208,22 @@ if (await fs.stat(iconSrc).then(() => true).catch(() => false)) {
   console.log(`[+] Đã xuất otter.ico vào deploy/otter.ico`);
 }
 
-const landingSrc = path.join(rootDir, "landing-page-live.html");
-if (await fs.stat(landingSrc).then(() => true).catch(() => false)) {
-  await fs.copyFile(landingSrc, path.join(deployDir, "index.html"));
-  console.log(`[+] Đã xuất landing page vào deploy/index.html`);
+// Build & sao chép Web Landing (React + Astryx) vào deploy/ (index.html + assets/)
+const webDir = path.join(rootDir, "web");
+const webDistDir = path.join(webDir, "dist");
+if (await fs.stat(path.join(webDir, "package.json")).then(() => true).catch(() => false)) {
+  console.log("\n[*] Đang build trang web công khai (web/ -> pnpm build)...");
+  execSync("pnpm build", { stdio: "inherit", cwd: webDir });
+  const deployAssetsDir = path.join(deployDir, "assets");
+  await fs.rm(deployAssetsDir, { recursive: true, force: true });
+  await fs.cp(webDistDir, deployDir, { recursive: true, force: true });
+  console.log(`[+] Đã xuất web/dist/* vào deploy/ (index.html + assets/)`);
+} else {
+  const landingSrc = path.join(rootDir, "landing-page-live.html");
+  if (await fs.stat(landingSrc).then(() => true).catch(() => false)) {
+    await fs.copyFile(landingSrc, path.join(deployDir, "index.html"));
+    console.log(`[+] Đã xuất landing page vào deploy/index.html`);
+  }
 }
 const openapiSrc = path.join(rootDir, "openapi.json");
 if (await fs.stat(openapiSrc).then(() => true).catch(() => false)) {

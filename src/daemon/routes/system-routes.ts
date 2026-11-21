@@ -6,11 +6,12 @@ import { openFolderPicker, openFilePicker } from "../system";
 import { registerAllowedWorkspace, isTrustedHostOrIp, getTailscaleIp, isFullAccessEnabled, setFullAccess, getAllowedWorkspaces } from "../security";
 import { getExternalToolsOpenApiPaths } from "../mcp-gateway";
 import { corsHeaders, jsonResponse, errorResponse } from "./common";
-import { getLicenseStatus, activateLicense } from "../license";
-import { activateOnline, DEFAULT_LICENSE_SERVER_URL } from "../license/hybrid-client";
+import { getLicenseStatus } from "../license";
+import { setTelemetryUser, sendTelemetryHeartbeat, getTelemetryUser } from "../telemetry";
 import { getQuickTunnelStatus, startQuickTunnel, stopQuickTunnel, openTunnelInBrowser } from "../tunnel";
 import { matchDaemonRoute } from "./lcg-routes";
 import { EMBEDDED_DASHBOARD_ASSETS } from "../dashboard-assets.generated";
+import { OTTER_VERSION } from "../version";
 
 export async function handleSystemRoutes(req: Request, url: URL, port: number): Promise<Response | null> {
   // -1. Public Health Check Endpoint
@@ -24,7 +25,7 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
     return jsonResponse({
       status: "ok",
       service: "otter-daemon",
-      version: "2.1.0",
+      version: OTTER_VERSION,
       platform: process.platform,
       uptime: Math.round(process.uptime()),
       port,
@@ -38,47 +39,40 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
     }, 200, {}, req);
   }
 
-  // 0. Quản lý bản quyền (Licensing)
+  // 0. Trạng thái mã nguồn mở & đồng bộ tài khoản người dùng hoạt động
   if (matchDaemonRoute(url.pathname, "SYS_LICENSE") && req.method === "GET") {
     const status = await getLicenseStatus();
     return jsonResponse(status);
   }
 
   if (matchDaemonRoute(url.pathname, "SYS_LICENSE_ACTIVATE") && req.method === "POST") {
+    return jsonResponse({
+      success: true,
+      message: "Otter hiện miễn phí mã nguồn mở (MIT) và không còn yêu cầu kích hoạt khóa bản quyền.",
+    });
+  }
+
+  if (url.pathname === "/api/system/telemetry/user" && req.method === "GET") {
+    return jsonResponse({ user: getTelemetryUser() });
+  }
+
+  if (url.pathname === "/api/system/telemetry/user" && req.method === "POST") {
     let body: any = {};
     try { body = await req.json(); } catch {}
-    const rawKey = (body?.key || "").trim();
-    if (!rawKey) {
-      return errorResponse("Thiếu license key", 400);
+    const clear = body?.clear === true || (!body?.email && !body?.uid && !body?.displayName);
+    if (clear) {
+      setTelemetryUser(null);
+      void sendTelemetryHeartbeat({ source: "dashboard", clearIdentity: true });
+      return jsonResponse({ ok: true, user: null });
     }
-
-    if (rawKey.toUpperCase().startsWith("OTTER-")) {
-      const onlineRes = await activateOnline({
-        serverUrl: body.serverUrl || DEFAULT_LICENSE_SERVER_URL,
-        email: (body.email || "").trim(),
-        licenseKey: rawKey
-      });
-      if (onlineRes.success) {
-        return jsonResponse({
-          success: true,
-          message: "Kích hoạt bản quyền trực tuyến thành công!",
-          payload: onlineRes.payload
-        });
-      } else {
-        return errorResponse(onlineRes.error || "Kích hoạt trực tuyến thất bại", 400);
-      }
-    }
-
-    const result = await activateLicense(rawKey);
-    if (result.success) {
-      return jsonResponse({
-        success: true,
-        message: "Kích hoạt bản quyền thành công!",
-        payload: result.payload
-      });
-    } else {
-      return errorResponse(result.error || "Kích hoạt bản quyền thất bại", 400);
-    }
+    const nextUser = {
+      uid: body.uid ? String(body.uid) : null,
+      email: body.email ? String(body.email).trim().toLowerCase() : null,
+      displayName: body.displayName ? String(body.displayName).trim() : null,
+    };
+    setTelemetryUser(nextUser);
+    void sendTelemetryHeartbeat({ source: "dashboard" });
+    return jsonResponse({ ok: true, user: nextUser });
   }
 
   // 0.1 Quản lý Cloudflare Quick Tunnel tự động (TryCloudflare 1 lần)

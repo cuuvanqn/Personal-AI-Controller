@@ -224,7 +224,7 @@ fn configure_tray(tray: &mut TrayItem) {
 
     // 1. Mở Dashboard
     let _ = tray.add_menu_item("🌐 Mở Otter Dashboard", || {
-        open_url("http://127.0.0.1:1993/activity");
+        open_url("http://127.0.0.1:1993/dashboard");
     });
 
     // 2. Mở Cổng MCP Endpoint
@@ -235,9 +235,10 @@ fn configure_tray(tray: &mut TrayItem) {
     // 3. Mở Quick Tunnel trên Trình duyệt
     let _ = tray.add_menu_item("🚀 Mở Quick Tunnel (Trình duyệt)", || {
         if let Some(url) = get_tunnel_url() {
-            open_url(&url);
+            let dash_url = format!("{}/dashboard", url.trim_end_matches('/'));
+            open_url(&dash_url);
         } else {
-            open_url("http://127.0.0.1:1993/activity");
+            open_url("http://127.0.0.1:1993/dashboard");
         }
     });
 

@@ -5,6 +5,7 @@ import * as crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { OTTER_VERSION } from "./version";
 import { getOtterDir } from "./db";
+import { trackOtterDownload } from "./telemetry";
 
 /**
  * Tự cập nhật Otter Daemon (bản exe đã biên dịch bằng bun build --compile).
@@ -35,7 +36,16 @@ export interface UpdateInfo {
   lastError: string | null;
 }
 
-const LICENSE_BASE_URL = (process.env.OTTER_LICENSE_URL || "https://license.gpt.io.vn").replace(/\/+$/, "");
+function getUpdateBaseUrl(): string {
+  return (process.env.OTTER_UPDATE_URL || process.env.OTTER_LICENSE_URL || "https://license.gpt.io.vn").replace(/\/+$/, "");
+}
+
+let beforeRestartHook: (() => void) | null = null;
+
+/** Đăng ký hook giải phóng cổng (vd: server.stop(true)) trước khi spawn bản mới để tránh EADDRINUSE. */
+export function registerBeforeRestartHook(fn: () => void): void {
+  beforeRestartHook = fn;
+}
 
 let lastInfo: UpdateInfo = {
   currentVersion: OTTER_VERSION,
@@ -77,7 +87,7 @@ type FetchLike = (url: string, init?: any) => Promise<any>;
 /** Kiểm tra phiên bản mới trên license server. Không ném lỗi ra ngoài. */
 export async function checkForUpdate(fetchImpl: FetchLike = fetch as any): Promise<UpdateInfo> {
   try {
-    const url = `${LICENSE_BASE_URL}/api/version?component=daemon&client_version=${encodeURIComponent(OTTER_VERSION)}`;
+    const url = `${getUpdateBaseUrl()}/api/version?component=daemon&client_version=${encodeURIComponent(OTTER_VERSION)}&platform=${encodeURIComponent(process.platform)}&arch=${encodeURIComponent(process.arch)}`;
     const res = await fetchImpl(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`License server trả HTTP ${res.status}`);
     const data = await res.json();
@@ -154,7 +164,14 @@ export function cleanupAfterUpdate(): void {
     if (marker.toVersion === OTTER_VERSION) {
       console.log(`[Updater] ✅ Cập nhật thành công lên v${OTTER_VERSION} (từ v${marker.fromVersion}).`);
       if (marker.backupPath && fs.existsSync(marker.backupPath)) {
-        fs.rmSync(marker.backupPath, { force: true });
+        try {
+          fs.rmSync(marker.backupPath, { force: true });
+        } catch {
+          // Windows có thể giữ khóa tiến trình cũ thêm vài trăm ms khi vừa tắt -> thử xóa lại sau 1.5s
+          setTimeout(() => {
+            try { fs.rmSync(marker.backupPath, { force: true }); } catch {}
+          }, 1500);
+        }
       }
       fs.rmSync(markerPath(), { force: true });
     } else {
@@ -196,6 +213,13 @@ export async function applyUpdate(opts: ApplyUpdateOptions = {}): Promise<Update
   const newBinaryPath = path.join(exeDir, `.otter-update-${info.latestVersion}.tmp`);
   console.log(`[Updater] Đang tải Otter v${info.latestVersion} từ ${info.downloadUrl} ...`);
   await downloadFile(info.downloadUrl, newBinaryPath, opts.fetchImpl);
+  void trackOtterDownload({
+    component: "daemon",
+    platform: process.platform,
+    version: info.latestVersion,
+    source: "updater",
+    fetchImpl: opts.fetchImpl as any,
+  });
 
   if (info.sha256) {
     const actual = await sha256File(newBinaryPath);
@@ -223,13 +247,17 @@ export async function applyUpdate(opts: ApplyUpdateOptions = {}): Promise<Update
   const restart =
     opts.restartSelf ||
     ((p: string) => {
+      // Giải phóng cổng HTTP (1993) trước khi khởi chạy bản mới để tránh lỗi EADDRINUSE
+      try {
+        beforeRestartHook?.();
+      } catch {}
       const child = spawn(p, process.argv.slice(2), {
         detached: true,
         stdio: "inherit",
         env: { ...process.env, OTTER_UPDATED_FROM: OTTER_VERSION },
       });
       child.unref();
-      setTimeout(() => process.exit(0), 500);
+      setTimeout(() => process.exit(0), 50);
     });
   restart(exePath);
   return info;

@@ -2,7 +2,8 @@ import * as path from "node:path";
 import { getTailscaleIp, ensureAuthToken } from "./security";
 import { initDatabase } from "./db";
 import { createMcpServer } from "./mcp";
-import { cleanupAfterUpdate, startUpdateScheduler } from "./updater";
+import { cleanupAfterUpdate, startUpdateScheduler, registerBeforeRestartHook } from "./updater";
+import { OTTER_VERSION } from "./version";
 import { recoverTaskQueue, sweepStaleBridgeTasks } from "./tools/task-bridge";
 import { enqueueInjection, flushInjectionOutbox, markInjectionDelivered, markInjectionFailed } from "./continuous-loop";
 import { recordTurn, stopPageLoop } from "./page-loop";
@@ -30,7 +31,6 @@ import {
   handleBookmarksRoutes,
   handleOAuthRoutes,
   handleCustomCommandsRoutes,
-  handleLicenseRoutes,
   handlePlanDashboardRoutes,
   handleFleetRoutes,
   handleChromeRoutes,
@@ -41,27 +41,18 @@ import {
   matchDaemonRoutePrefix
 } from "./routes";
 import { startScheduledTaskRunner } from "./scheduled-tasks";
-import {
-  getLicenseStatus,
-  printLicenseLockBanner,
-  assertHostsIntegrity,
-  loadLicense,
-  sendHeartbeat,
-  clearLicenseCache,
-  parseLicensePayload,
-  activateLicense
-} from "./license";
+import { startTelemetryHeartbeat } from "./telemetry";
 
 const cliArg = process.argv[2];
 
 if (cliArg === "version" || cliArg === "--version" || cliArg === "-v") {
-  console.log("Otter Agent v2.1.0");
+  console.log(`Otter Agent v${OTTER_VERSION}`);
   process.exit(0);
 }
 
 if (cliArg === "help" || cliArg === "--help" || cliArg === "-h") {
   console.log(`
-🦦 Otter Agent — Agentic AI Desktop & Browser Controller (v2.1.0)
+🦦 Otter Agent — Agentic AI Desktop & Browser Controller (v${OTTER_VERSION})
 
 Cách sử dụng:
   otter                         Khởi động Otter Daemon ngầm (tự động kết nối TryCloudflare)
@@ -71,47 +62,14 @@ Cách sử dụng:
   otter cua call <tool> [args]  Gọi trực tiếp công cụ CUA (get_screen_size, click, type_text...)
   otter cua list [query]        Liệt kê 61 công cụ CUA khả dụng
   otter cua status              Xem trạng thái hoạt động của CUA Daemon
-  otter license activate <KEY>  Kích hoạt bản quyền bằng License Key
-  otter license status          Xem mã thiết bị và trạng thái bản quyền
   otter version                 Xem phiên bản hiện tại
 `);
   process.exit(0);
 }
 
 if (cliArg === "license" || cliArg === "license:activate" || cliArg === "license:status" || cliArg === "activate") {
-  const subArg = process.argv[3];
-  if (cliArg === "license:activate" || cliArg === "activate" || (cliArg === "license" && subArg === "activate")) {
-    const key = (cliArg === "license" && subArg === "activate") ? process.argv[4] : subArg;
-    if (!key) {
-      console.log("\x1b[31m[!] Vui lòng cung cấp License Key:\x1b[0m otter license activate <LICENSE_KEY>");
-      process.exit(1);
-    }
-    console.log(`[*] Đang kích hoạt license key...`);
-    const act = await activateLicense(key);
-    if (act.success) {
-      console.log("\x1b[32m[✓] KÍCH HOẠT BẢN QUYỀN THÀNH CÔNG!\x1b[0m");
-      console.log(`- Khách hàng: ${act.payload?.customer || "N/A"}`);
-      console.log(`- Loại bản quyền: ${act.payload?.license_type}`);
-      console.log(`- Hạn sử dụng: ${act.payload?.expires_at || "Vĩnh viễn"}\n`);
-      process.exit(0);
-    } else {
-      console.log(`\x1b[31m[!] Kích hoạt thất bại: ${act.error}\x1b[0m\n`);
-      process.exit(1);
-    }
-  } else if (cliArg === "license:status" || (cliArg === "license" && (subArg === "status" || !subArg))) {
-    const status = await getLicenseStatus();
-    console.log(`\n🔑 OTTER AGENT — TRẠNG THÁI BẢN QUYỀN\n`);
-    console.log(`- Mã thiết bị (Support Code): \x1b[33m${status.supportCode}\x1b[0m`);
-    console.log(`- Trạng thái: ${status.licensed ? "\x1b[32mĐÃ KÍCH HOẠT\x1b[0m" : "\x1b[31mCHƯA KÍCH HOẠT\x1b[0m"}`);
-    if (status.reason) console.log(`- Lý do: ${status.reason}`);
-    if (status.payload) {
-      console.log(`- Loại bản quyền: ${status.payload.license_type}`);
-      console.log(`- Hạn dùng: ${status.payload.expires_at || "Vĩnh viễn"}`);
-      if (status.payload.customer) console.log(`- Khách hàng: ${status.payload.customer}`);
-    }
-    console.log("");
-    process.exit(0);
-  }
+  console.log("\n🦦 Otter hiện phát hành miễn phí theo giấy phép mã nguồn mở (MIT) và không yêu cầu kích hoạt khóa bản quyền.\n");
+  process.exit(0);
 }
 
 if (cliArg === "cua" || cliArg === "cua-driver") {
@@ -609,9 +567,6 @@ const server = Bun.serve<WsClientData>({
     const cmdRes = await handleCustomCommandsRoutes(req, url, db);
     if (cmdRes) return cmdRes;
 
-    const licenseRes = await handleLicenseRoutes(req, url);
-    if (licenseRes) return licenseRes;
-
     const planRes = await handlePlanDashboardRoutes(req, url, db);
     if (planRes) return planRes;
 
@@ -786,43 +741,10 @@ const server = Bun.serve<WsClientData>({
   }
 });
 
-// 1. Kiểm tra tính toàn vẹn tệp hosts (Chặn khởi động app nếu can thiệp DNS server về local trên Windows/macOS)
-assertHostsIntegrity();
+console.log(`[+] 🔓 Giấy phép: Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng`);
 
-const license = await getLicenseStatus();
-console.log(`[+] 🔓 License: Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng`);
-console.log(`[+] 👤 Người dùng: ${license.payload?.customer || "Open Source Community"}`);
-
-// 1b. Heartbeat tự động cho leased token — trước đây sendHeartbeat không
-// có chỗ nào gọi, nên token leased hết hạn là chết dù máy vẫn online.
-// Chạy mỗi 6 giờ, và chạy ngay một lần nếu token sắp hết hạn trong 48 giờ.
-// Lỗi heartbeat chỉ log, không crash daemon; lần sau sẽ thử lại.
-try {
-  const storedForHeartbeat = loadLicense();
-  if (storedForHeartbeat?.leased_token) {
-    const runHeartbeat = async () => {
-      try {
-        const res = await sendHeartbeat();
-        if (res.success) {
-          clearLicenseCache();
-          console.log(`[+] License heartbeat: đã gia hạn tới ${res.leasedExpiresAt || "?"}`);
-        } else {
-          console.warn(`[!] License heartbeat thất bại: ${res.error}`);
-        }
-      } catch (err: any) {
-        console.warn(`[!] License heartbeat lỗi: ${err?.message || err}`);
-      }
-    };
-    const payloadForHeartbeat = parseLicensePayload(storedForHeartbeat.payload);
-    const leasedExp = payloadForHeartbeat?.leased_expires_at
-      ? new Date(payloadForHeartbeat.leased_expires_at).getTime()
-      : NaN;
-    if (!Number.isNaN(leasedExp) && leasedExp - Date.now() < 48 * 60 * 60 * 1000) {
-      void runHeartbeat();
-    }
-    setInterval(runHeartbeat, 6 * 60 * 60 * 1000);
-  }
-} catch {}
+// Gửi nhịp hoạt động ẩn danh (hoặc gắn tài khoản Firebase nếu đã đăng nhập) mỗi 3 phút
+startTelemetryHeartbeat();
 
 console.log(`=======================================================`);
 console.log(`[+] 🦦 Otter Daemon running at http://127.0.0.1:${PORT}`);
@@ -911,5 +833,6 @@ if (shouldStartTunnel) {
 
 // Tự cập nhật daemon: dọn marker sau lần cập nhật trước + lịch kiểm tra
 // phiên bản mới (bản bắt buộc tự áp dụng; OTTER_AUTO_UPDATE=1 để tự áp dụng mọi bản).
+registerBeforeRestartHook(() => server.stop(true));
 cleanupAfterUpdate();
 startUpdateScheduler(handleMcpActivity);

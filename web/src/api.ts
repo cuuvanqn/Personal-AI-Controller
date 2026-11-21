@@ -34,3 +34,24 @@ export const COMPONENT_LABELS: Record<string, string> = {
 export function componentLabel(component: string): string {
   return COMPONENT_LABELS[component] || component;
 }
+
+export function trackDownload(opts: {
+  component: string;
+  platform?: string;
+  version?: string;
+  source?: string;
+}): void {
+  try {
+    void fetch(`${LICENSE_API}/api/downloads/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        component: opts.component,
+        platform: opts.platform || "unknown",
+        version: opts.version || null,
+        source: opts.source || "web",
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {}
+}

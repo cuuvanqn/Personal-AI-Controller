@@ -174,6 +174,11 @@ else
             if [ -s "$TARGET_EXE" ]; then
                 DOWNLOADED=true
                 echo "[+] Tải file thực thi thành công! ($TARGET_EXE)"
+                DL_PLATFORM="linux"
+                [ "$OS" = "Darwin" ] && DL_PLATFORM="macos"
+                curl -fsS --max-time 4 -X POST "https://license.gpt.io.vn/api/downloads/track" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"component\":\"daemon\",\"platform\":\"$DL_PLATFORM\",\"source\":\"setup-sh\"}" >/dev/null 2>&1 || true
                 break
             fi
         fi

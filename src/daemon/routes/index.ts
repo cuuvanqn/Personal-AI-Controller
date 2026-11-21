@@ -10,7 +10,6 @@ export { handleSkillsRoutes } from "./skills-routes";
 export { handleBookmarksRoutes } from "./bookmarks-routes";
 export { handleOAuthRoutes } from "./oauth-routes";
 export { handleCustomCommandsRoutes } from "./custom-commands-routes";
-export { handleLicenseRoutes } from "./license-routes";
 export { handlePlanDashboardRoutes } from "./plan-dashboard-routes";
 export { handleFleetRoutes } from "./fleet-routes";
 export { handleChromeRoutes } from "./chrome-routes";

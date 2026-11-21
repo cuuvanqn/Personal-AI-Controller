@@ -242,6 +242,9 @@ if ($FoundLocal) {
                 $Downloaded = $true
                 $FileSizeMb = [math]::Round((Get-Item $ExePath).Length / 1MB, 1)
                 Write-Host "[+] Tai file thuc thi thanh cong! ($FileSizeMb MB)" -ForegroundColor Green
+                try {
+                    Invoke-RestMethod -Uri "https://license.gpt.io.vn/api/downloads/track" -Method Post -ContentType "application/json" -Body '{"component":"daemon","platform":"windows","source":"setup-ps1"}' -TimeoutSec 4 -ErrorAction SilentlyContinue | Out-Null
+                } catch {}
                 break
             }
         } catch {
