@@ -527,10 +527,8 @@ if ($proc) {
     Write-Host " - Tu khoi dong: Da bat moi khi mo may tinh" -ForegroundColor White
     Write-Host " - Lenh goi CLI: 'otter', 'otter cua', 'cua' (Da dang ky PATH toan cuc)" -ForegroundColor Cyan
     Write-Host " - Thu muc cai dat: $InstallDir" -ForegroundColor White
-    if (Test-Path $ExtDir) {
-        Write-Host " - Chrome Extension: $ExtDir (Da giai nen san)" -ForegroundColor Gray
-    }
-    Write-Host "`n-> Buoc tiep theo: Mo chrome://extensions/ bat Developer Mode va chon 'Tai tien ich da giai nen' -> tro vao: $ExtDir" -ForegroundColor Yellow
+    Write-Host " - Trinh duyet: Tu dong dieu khien truc tiep qua Chrome CDP (Khong can cai Extension!)" -ForegroundColor Green
+    Write-Host "`n-> San sang su dung: Mo Dashboard tai http://127.0.0.1:1993 hoac dung qua endpoint MCP / SSE." -ForegroundColor Yellow
     Write-Host "========================================================`n" -ForegroundColor Green
 } else {
     Write-Host "[!] Da khoi dong lenh nhung chua thay tien trinh otter.exe. Vui long kiem tra lai log." -ForegroundColor Yellow
