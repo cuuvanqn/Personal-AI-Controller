@@ -1174,6 +1174,8 @@ export const OTTER_PAGE_CORE_SCRIPT = `(() => {
       document.getElementById(FRAME_ID)?.remove();
       document.getElementById(INSPECTOR_ID)?.remove();
       document.getElementById(STYLE_ID)?.remove();
+      document.getElementById('otter-badges-container')?.remove();
+      document.getElementById('chatmcp-badges-container')?.remove();
       if (window.__otter_hover_handler) {
         document.removeEventListener('mousemove', window.__otter_hover_handler);
         window.__otter_hover_handler = null;
