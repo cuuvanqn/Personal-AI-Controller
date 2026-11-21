@@ -51,6 +51,7 @@ try {
 console.log("\n[2/5] Tải lên kịch bản cài đặt, extension và metadata...");
 const staticFiles = [
   "index.html",
+  "favicon.svg",
   "install.bat",
   "uninstall.bat",
   "setup.ps1",
