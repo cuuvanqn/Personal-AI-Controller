@@ -278,14 +278,17 @@ fn try_create_tray() -> Option<TrayItem> {
     ];
     let tray_wnd = unsafe { FindWindowW(class_tray.as_ptr(), ptr::null()) };
     if tray_wnd == 0 {
+        log_msg("FindWindowW(Shell_TrayWnd) == 0");
         return None;
     }
 
-    TrayItem::new("Otter", IconSource::Resource("otter"))
-        .or_else(|_| TrayItem::new("Otter", IconSource::Resource("tray-default")))
-        .or_else(|_| TrayItem::new("Otter", IconSource::Resource("1")))
-        .or_else(|_| TrayItem::new("Otter", IconSource::Resource("")))
-        .ok()
+    for name in ["otter", "tray-default", "1", ""] {
+        match TrayItem::new("Otter", IconSource::Resource(name)) {
+            Ok(t) => return Some(t),
+            Err(e) => log_msg(&format!("TrayItem::new({:?}) failed: {:?}", name, e)),
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -337,7 +340,7 @@ fn main() {
         log_msg("Another instance of Otter Tray is already running.");
         if !is_autostart {
             log_msg("User requested launch: opening dashboard in browser...");
-            open_url("http://127.0.0.1:1993/activity");
+            open_url("http://127.0.0.1:1993/dashboard");
         }
         return;
     }
@@ -348,7 +351,7 @@ fn main() {
     // Nếu người dùng nhấp trực tiếp (không phải Windows boot autostart), mở Dashboard ngay
     if !is_autostart {
         log_msg("Opening Otter Dashboard in default browser...");
-        open_url("http://127.0.0.1:1993/activity");
+        open_url("http://127.0.0.1:1993/dashboard");
     }
 
     // Vòng lặp giám sát liên tục (Daemon Watchdog & Dynamic Tray Creator)
