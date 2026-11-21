@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { CdpBridge, readDefaultChromeActivePort } from "../src/daemon/cdp-bridge";
-import { OTTER_CORE_VERSION, isFacebookPostMismatch } from "../src/daemon/cdp-page-core";
+import { OTTER_CORE_VERSION, OTTER_PAGE_CORE_SCRIPT, isFacebookPostMismatch } from "../src/daemon/cdp-page-core";
 
 describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
   test("readDefaultChromeActivePort parses valid, invalid, and missing DevToolsActivePort", () => {
@@ -235,6 +235,18 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
     ).toBe(false);
   });
 
+  test("OTTER_PAGE_CORE_SCRIPT includes robust ChatGPT inject and auto-approval logic", () => {
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("injectChatMessage");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("tryChatGptAutoApprove");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("DataTransfer");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("ProseMirror");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("prompt-textarea");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("isGenerating");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("stop-button");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("always allow");
+    expect(OTTER_PAGE_CORE_SCRIPT).toContain("luôn cho phép");
+  });
+
   test("preloads window.__otterCore via CDP, runs Alibaba Page-Agent readPage, hardware click, React typing, scroll & HUD", async () => {
     const bridge = new CdpBridge();
     const available = await bridge.isAvailable();
@@ -242,15 +254,22 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
       console.warn("[cdp-core.test] Chrome CDP port not open — skipping live browser assertions");
       return;
     }
+    let liveTabs: any[] = [];
+    try {
+      liveTabs = await bridge.getTabs();
+    } catch (e: any) {
+      console.warn("[cdp-core.test] Chrome CDP tabs not accessible (waiting for Allow confirmation):", e.message);
+      return;
+    }
 
-    // 1. Preload core on open tabs
-    const preloadedCount = await bridge.preloadCoreOnAllTabs();
-    expect(preloadedCount).toBeGreaterThanOrEqual(1);
-
-    // 2. Open https://otter.gpt.io.vn/ — Page.addScriptToEvaluateOnNewDocument auto-loads __otterCore
+    // 1. Open https://otter.gpt.io.vn/ — Page.addScriptToEvaluateOnNewDocument auto-loads __otterCore
     const opened = await bridge.openUrl("https://otter.gpt.io.vn/");
     expect(opened.ok).toBe(true);
     expect(opened.url).toContain("otter.gpt.io.vn");
+
+    // 2. Preload core on open tabs
+    const preloadedCount = await bridge.preloadCoreOnAllTabs();
+    expect(preloadedCount).toBeGreaterThanOrEqual(1);
 
     // 3. Verify all Extension Core APIs are preloaded inside window.__otterCore
     const coreCheck = await bridge.execute("evaluate_js", {
@@ -270,6 +289,8 @@ describe("CDP Extension Core (Unit + Live Chrome CDP)", () => {
     expect(coreCheck.result.apis).toContain("commentFacebook");
     expect(coreCheck.result.apis).toContain("openFbComposer");
     expect(coreCheck.result.apis).toContain("finishFbPost");
+    expect(coreCheck.result.apis).toContain("injectChatMessage");
+    expect(coreCheck.result.apis).toContain("tryChatGptAutoApprove");
     expect(coreCheck.result.apis).toContain("museSend");
     expect(coreCheck.result.apis).toContain("injectHud");
 

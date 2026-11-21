@@ -234,33 +234,53 @@ export class BrowserBridge {
 
   /**
    * Gửi nội dung inject thẳng vào ô nhập của ChatGPT Web.
+   * Nếu có WebSocket Extension thì gửi qua Extension; nếu không thì tự động gửi qua CDP.
    */
   injectPrompt(text: string, autoSubmit = true, injectionId?: string): boolean {
     const ws = this.getActiveSocket();
-    if (!ws) return false;
+    if (ws) {
+      try {
+        ws.send(JSON.stringify({
+          type: "inject_prompt",
+          text,
+          autoSubmit,
+          ...(injectionId ? { injectionId } : {}),
+        }));
+        return true;
+      } catch {}
+    }
 
-    ws.send(JSON.stringify({
-      type: "inject_prompt",
-      text,
-      autoSubmit,
-      ...(injectionId ? { injectionId } : {}),
-    }));
+    // Tự động chuyển sang CDP khi không dùng Chrome Extension
+    void this.injectPromptSmart(text, autoSubmit, injectionId);
     return true;
   }
 
   /**
-   * Chèn tin nhắn vào ChatGPT: ưu tiên Extension (ổn định nhất trong trang),
-   * nếu Extension chưa kết nối thì dùng CDP (tự mở Chrome CDP khi cần).
+   * Chèn tin nhắn vào ChatGPT: ưu tiên Extension (nếu đang kết nối),
+   * tự động chuyển sang CDP (mở Chrome CDP / nạp Page-Agent Core) khi không có Extension.
    */
   async injectPromptSmart(text: string, autoSubmit = true, injectionId?: string): Promise<boolean> {
-    if (this.injectPrompt(text, autoSubmit, injectionId)) return true;
+    const ws = this.getActiveSocket();
+    if (ws) {
+      try {
+        ws.send(JSON.stringify({
+          type: "inject_prompt",
+          text,
+          autoSubmit,
+          ...(injectionId ? { injectionId } : {}),
+        }));
+        return true;
+      } catch {}
+    }
+
     try {
       if (!(await cdpBridge.isAvailable())) {
         await cdpBridge.ensureCdpChrome();
       }
       const res = await cdpBridge.injectChatMessage(text, autoSubmit);
       return Boolean(res.ok);
-    } catch {
+    } catch (err: any) {
+      console.warn("[BrowserBridge] CDP inject prompt failed:", err?.message || err);
       return false;
     }
   }

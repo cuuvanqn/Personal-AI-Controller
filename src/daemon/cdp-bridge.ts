@@ -1280,7 +1280,22 @@ export class CdpBridge {
    * Chèn tin nhắn vào ô nhập của ChatGPT Web qua CDP (không cần Extension).
    */
   async injectChatMessage(text: string, autoSubmit = true, port?: number): Promise<{ ok: boolean; message: string }> {
-    const tab = await this.findTargetTab("chatgpt.com", port);
+    let tab: CdpTab;
+    try {
+      const tabs = await this.getTabs(port);
+      const pageTabs = tabs.filter((t) => this.isUsablePageTab(t));
+      const chatTab = pageTabs.find((t) => t.url.toLowerCase().includes("chatgpt.com"));
+      if (chatTab) {
+        tab = chatTab;
+      } else if (pageTabs.length > 0) {
+        tab = pageTabs[0];
+      } else {
+        tab = await this.createTab("https://chatgpt.com", port);
+        await new Promise((r) => setTimeout(r, 3500));
+      }
+    } catch {
+      tab = await this.findTargetTab("chatgpt.com", port);
+    }
 
     const res = await this.withTabSession(tab, async (send) => {
       await this.ensureCoreInSession(send, tab.id);
@@ -1288,7 +1303,7 @@ export class CdpBridge {
         send,
         `window.__otterCore.injectChatMessage(${JSON.stringify(text)}, ${Boolean(autoSubmit)})`,
         true,
-        12000
+        35000
       );
     });
     if (!res?.ok) throw new Error(res?.error || "Chèn tin nhắn vào ChatGPT thất bại");

@@ -1237,34 +1237,231 @@ export const OTTER_PAGE_CORE_SCRIPT = `(() => {
     return { active: true, message: 'Đã kích hoạt Otter CDP HUD' };
   }
 
-  // ── 11. CHATGPT INJECT & MUSE AI HELPERS ────────────────────────────────────
+  // ── 11. CHATGPT INJECT & AUTO-APPROVAL ─────────────────────────────────────
+  function tryChatGptAutoApprove() {
+    const dialogs = document.querySelectorAll(
+      '[role="alert"], [role="dialog"], [role="alertdialog"], [data-radix-dialog-content], [data-state="open"]'
+    );
+    for (const alertEl of dialogs) {
+      const text = (alertEl.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const isActionOrTool = /(?:cho phép|allow|always allow|luôn cho phép|nói chuyện với|talk to|otter\.gpt\.io\.vn)/i.test(text);
+      if (!isActionOrTool) continue;
+
+      const buttons = Array.from(alertEl.querySelectorAll('button'));
+      const alwaysBtn = buttons.find(b => {
+        const t = (b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return t.includes('always allow') || t.includes('luôn cho phép');
+      });
+      if (alwaysBtn) {
+        alwaysBtn.click();
+        continue;
+      }
+
+      const allowBtn = buttons.find(b => {
+        const t = (b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return t === 'cho phép' || t === 'allow' || t.includes('cho phép lần này') || t.includes('allow this time');
+      });
+      if (allowBtn) {
+        allowBtn.click();
+      }
+    }
+  }
+
   async function injectChatMessage(text, autoSubmit) {
-    const editor = document.querySelector('#prompt-textarea') ||
-                   document.querySelector('div[contenteditable="true"][data-testid="prompt-textarea"]') ||
-                   document.querySelector('.ProseMirror') ||
-                   document.querySelector('textarea');
+    tryChatGptAutoApprove();
+
+    const isGenerating = () => {
+      const stopSelectors = [
+        'button[data-testid="stop-button"]',
+        '[data-testid="stop-button"]',
+        'button[aria-label="Stop generating"]',
+        'button[aria-label*="Ngừng"]',
+        'button[aria-label*="Dừng"]',
+        'button[aria-label*="Stop"]'
+      ];
+      for (const sel of stopSelectors) {
+        const el = document.querySelector(sel);
+        if (el && el.isConnected) {
+          if (!document.hidden && !(el.offsetWidth || el.offsetHeight)) continue;
+          return true;
+        }
+      }
+      return !!document.querySelector('.result-streaming');
+    };
+
+    const startWait = Date.now();
+    while (isGenerating() && (Date.now() - startWait < 30000)) {
+      await new Promise(r => setTimeout(r, 400));
+    }
+
+    const PROMPT_SELECTORS = [
+      '#prompt-textarea',
+      'div#prompt-textarea',
+      '[data-testid="composer-text-input"]',
+      '[data-id="prompt-textarea"]',
+      '[data-testid="prompt-textarea"]',
+      '[data-testid="composer-input"]',
+      'div.ProseMirror',
+      '.ProseMirror',
+      'form [contenteditable="true"]',
+      'form [role="textbox"]',
+      '#composer-background [contenteditable="true"]',
+      '[data-testid="composer-container"] [contenteditable="true"]',
+      'div[class*="composer"] [contenteditable="true"]',
+      'textarea[data-id="prompt-textarea"]',
+      'textarea[placeholder*="Send a message"]',
+      'textarea[aria-label*="Message ChatGPT"]',
+      'textarea[tabindex="0"]',
+      'textarea'
+    ];
+
+    let editor = null;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      for (const sel of PROMPT_SELECTORS) {
+        try {
+          const el = document.querySelector(sel);
+          if (el && el.isConnected) {
+            editor = el;
+            break;
+          }
+        } catch {}
+      }
+      if (editor) break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    if (!editor) {
+      const allEditables = Array.from(document.querySelectorAll('[contenteditable="true"], [role="textbox"]'));
+      if (allEditables.length > 0) editor = allEditables[allEditables.length - 1];
+    }
+
     if (!editor) return { ok: false, error: 'Không tìm thấy ô soạn thảo ChatGPT (#prompt-textarea)' };
+
     scrollCenter(editor);
     editor.focus();
-    const inserted = document.execCommand && document.execCommand('insertText', false, text);
-    if (!inserted) {
-      if ('value' in editor) editor.value = text;
-      else editor.textContent = text;
+
+    let inserted = false;
+    const isTextarea = editor.tagName.toLowerCase() === 'textarea';
+
+    if (isTextarea) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+      if (nativeSetter) nativeSetter.call(editor, text);
+      else editor.value = text;
       editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+      inserted = true;
+    } else {
+      try {
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      } catch {}
+
+      try {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', text);
+        const pasteEvent = new ClipboardEvent('paste', {
+          clipboardData,
+          bubbles: true,
+          cancelable: true
+        });
+        editor.dispatchEvent(pasteEvent);
+        await new Promise(r => setTimeout(r, 60));
+        const inner = editor.innerText || editor.textContent || '';
+        if (inner.includes(text.slice(0, 30))) {
+          inserted = true;
+        }
+      } catch {}
+
+      if (!inserted) {
+        try {
+          editor.focus();
+          inserted = document.execCommand && document.execCommand('insertText', false, text);
+          await new Promise(r => setTimeout(r, 50));
+        } catch {}
+      }
+
+      if (!inserted) {
+        try {
+          editor.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true, cancelable: true, composed: true, inputType: 'insertText', data: text
+          }));
+          editor.innerText = text;
+          editor.dispatchEvent(new InputEvent('input', {
+            bubbles: true, composed: true, inputType: 'insertText', data: text
+          }));
+          inserted = true;
+        } catch {}
+      }
+
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
+
     if (!autoSubmit) return { ok: true, submitted: false };
-    await new Promise(r => setTimeout(r, 350));
-    const form = document.querySelector('form');
-    const btn = (form && form.querySelector('button[type="submit"]')) ||
-                document.querySelector('button[data-testid="send-button"]') ||
-                document.querySelector('button[aria-label*="Send" i]') ||
-                document.querySelector('button[aria-label*="Gửi" i]');
-    if (btn && !btn.disabled) {
-      dispatchW3CClick(btn);
-      if (form && typeof form.requestSubmit === 'function') { try { form.requestSubmit(btn); } catch {} }
+
+    const SUBMIT_SELECTORS = [
+      'form button[type="submit"]',
+      'button[data-testid="send-button"]',
+      'button[data-testid*="send"]',
+      'button[data-testid*="composer-send"]',
+      'button[aria-label*="Gửi"]',
+      'button[aria-label*="Send"]',
+      'button[type="submit"]'
+    ];
+
+    const isBtnDisabled = (btn) => {
+      if (!btn) return true;
+      return btn.hasAttribute('disabled') ||
+             btn.getAttribute('aria-disabled') === 'true' ||
+             btn.getAttribute('data-disabled') === 'true' ||
+             btn.classList.contains('disabled');
+    };
+
+    let submitBtn = null;
+    const form = editor.closest('form') || document.querySelector('form');
+    const submitStart = Date.now();
+
+    while (Date.now() - submitStart < 3500) {
+      if (form) {
+        submitBtn = form.querySelector('button[type="submit"]');
+      }
+      if (!submitBtn || isBtnDisabled(submitBtn)) {
+        for (const sel of SUBMIT_SELECTORS) {
+          try {
+            const btn = document.querySelector(sel);
+            if (btn && !isBtnDisabled(btn)) {
+              submitBtn = btn;
+              break;
+            }
+          } catch {}
+        }
+      }
+
+      if (submitBtn && !isBtnDisabled(submitBtn)) {
+        break;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    if (submitBtn && !isBtnDisabled(submitBtn)) {
+      dispatchW3CClick(submitBtn);
+      if (form && typeof form.requestSubmit === 'function') {
+        try { form.requestSubmit(submitBtn); } catch {}
+      }
       return { ok: true, submitted: true };
     }
-    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+
+    editor.focus();
+    editor.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+    }));
     return { ok: true, submitted: true };
   }
 
@@ -1376,10 +1573,32 @@ export const OTTER_PAGE_CORE_SCRIPT = `(() => {
     finishFbPost,
     injectHud,
     injectChatMessage,
+    tryChatGptAutoApprove,
     museCheckReady,
     museSend,
     musePoll,
     museExtractBlob
   };
+
+  try {
+    if (typeof location !== 'undefined' && location.hostname && location.hostname.includes('chatgpt.com')) {
+      if (!window.__otter_chatgpt_observer) {
+        let timer = null;
+        window.__otter_chatgpt_observer = new MutationObserver(() => {
+          if (timer) return;
+          timer = setTimeout(() => {
+            timer = null;
+            tryChatGptAutoApprove();
+          }, 300);
+        });
+        window.__otter_chatgpt_observer.observe(document.body || document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+        tryChatGptAutoApprove();
+      }
+    }
+  } catch {}
+
   return { installed: true, reused: false, version: window.__otterCore.version };
 })()`;
