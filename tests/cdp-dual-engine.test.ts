@@ -71,9 +71,41 @@ describe("Otter CDP & Dual-Engine Browser Automation Tests", () => {
     const statusExt = await browserBridge.getStatus();
     expect(statusExt.mode).toBe("extension");
 
-    // Khôi phục về auto
-    browserBridge.setEngineMode("auto");
+    // Khôi phục về mặc định CDP
+    browserBridge.setEngineMode("cdp");
   });
+
+  test("browserBridge: chế độ mặc định là CDP (engine chính)", async () => {
+    const { BrowserBridge } = await import("../src/daemon/browser-bridge");
+    const fresh = new BrowserBridge();
+    // Không đặt OTTER_BROWSER_ENGINE trong môi trường test -> mặc định "cdp".
+    if (!process.env.OTTER_BROWSER_ENGINE) {
+      expect(fresh.getEngineMode()).toBe("cdp");
+    }
+    const status = await fresh.getStatus();
+    expect(status.mode).toBe(fresh.getEngineMode());
+    // Ở chế độ cdp, activeEngine chỉ có thể là cdp hoặc none (không bao giờ extension).
+    if (status.mode === "cdp") {
+      expect(["cdp", "none"]).toContain(status.activeEngine);
+    }
+  });
+
+  test("cdpBridge: select/inject báo lỗi rõ ràng khi CDP chưa mở", async () => {
+    const isAvail = await cdpBridge.isAvailable();
+    if (isAvail) return; // Máy có Chrome CDP thật: bỏ qua, đã có test read_page bao phủ.
+    await expect(cdpBridge.select(1, "x")).rejects.toThrow();
+    await expect(cdpBridge.injectChatMessage("xin chào")).rejects.toThrow();
+    await expect(cdpBridge.execute("select", { index: 1, option: "x" })).rejects.toThrow();
+  });
+
+  test("browserBridge: injectPromptSmart trả false khi cả 2 engine đều chưa sẵn sàng", async () => {
+    const isAvail = await cdpBridge.isAvailable();
+    if (isAvail) return;
+    // Không có extension socket, CDP chưa mở và không spawn được Chrome trong CI:
+    // hàm phải trả false thay vì ném lỗi. (ensureCdpChrome có thể mất vài giây nếu thử spawn.)
+    const ok = await browserBridge.injectPromptSmart("test", false);
+    expect(ok).toBe(false);
+  }, 30000);
 
   test("browserBridge: unified execute('read_page') runs seamlessly", async () => {
     const isAvail = await cdpBridge.isAvailable();

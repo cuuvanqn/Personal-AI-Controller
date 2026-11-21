@@ -8,6 +8,12 @@
  * - Cung cấp chuẩn dữ liệu { title, url, tabId, elements, elementsCount, summaryText } đồng nhất với BrowserController.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { findChromeExecutable } from "./chrome-profile";
+import { getOtterDir } from "./db";
+
 export interface CdpTab {
   id: string;
   title: string;
@@ -480,6 +486,41 @@ export class CdpBridge {
   }
 
   /**
+   * Chọn một tùy chọn trong thẻ <select> theo index (khớp theo value hoặc chữ hiển thị)
+   */
+  async select(index: number, option: string, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
+    const tab = await this.findTargetTab(urlPattern, port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab không có webSocketDebuggerUrl hợp lệ");
+
+    const safeOption = JSON.stringify(option);
+    const selectScript = `(() => {
+      const idx = ${index} - 1;
+      const elements = window.__otter_elements || [];
+      const target = elements[idx] || document.querySelector('[data-otter-index="${index}"]');
+      if (!target) return { ok: false, error: 'Không tìm thấy phần tử index [' + ${index} + ']' };
+      if (target.tagName !== 'SELECT') return { ok: false, error: 'Phần tử [' + ${index} + '] không phải thẻ SELECT (là ' + target.tagName + ')' };
+
+      const wanted = ${safeOption};
+      const opt = Array.from(target.options).find(o => o.value === wanted || o.text.trim() === wanted);
+      if (!opt) return { ok: false, error: 'Không tìm thấy tùy chọn "' + wanted + '" trong SELECT [' + ${index} + ']' };
+
+      target.scrollIntoView({ behavior: 'instant', block: 'center' });
+      target.focus();
+      target.value = opt.value;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true, text: opt.text.trim() };
+    })()`;
+
+    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, selectScript);
+    if (!res.ok) throw new Error(res.error || `Chọn tùy chọn thất bại tại index [${index}]`);
+    return {
+      ok: true,
+      message: `Đã chọn "${res.text}" trong SELECT [${index}] qua CDP thành công`
+    };
+  }
+
+  /**
    * Cuộn trang
    */
   async scroll(direction: "up" | "down", amount = 600, urlPattern?: string, port?: number): Promise<{ ok: boolean; message: string }> {
@@ -576,6 +617,110 @@ export class CdpBridge {
   }
 
   /**
+   * Chèn tin nhắn vào ô nhập của ChatGPT Web qua CDP (không cần Extension).
+   * Tìm tab chatgpt.com, điền nội dung vào ô soạn thảo và bấm nút gửi nếu autoSubmit.
+   */
+  async injectChatMessage(text: string, autoSubmit = true, port?: number): Promise<{ ok: boolean; message: string }> {
+    const tab = await this.findTargetTab("chatgpt.com", port);
+    if (!tab.webSocketDebuggerUrl) throw new Error("Tab ChatGPT không có webSocketDebuggerUrl hợp lệ");
+
+    const safeText = JSON.stringify(text);
+    const injectScript = `(() => {
+      const editor = document.querySelector('#prompt-textarea')
+        || document.querySelector('div[contenteditable="true"][data-testid="prompt-textarea"]')
+        || document.querySelector('textarea');
+      if (!editor) return { ok: false, error: 'Không tìm thấy ô soạn thảo ChatGPT (#prompt-textarea)' };
+
+      editor.scrollIntoView({ behavior: 'instant', block: 'center' });
+      editor.focus();
+      // execCommand insertText hoạt động tốt với editor React của ChatGPT.
+      const inserted = document.execCommand && document.execCommand('insertText', false, ${safeText});
+      if (!inserted) {
+        if ('value' in editor) editor.value = ${safeText};
+        else editor.textContent = ${safeText};
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return { ok: true };
+    })()`;
+
+    const res = await this.evaluateJs(tab.webSocketDebuggerUrl, injectScript);
+    if (!res.ok) throw new Error(res.error || "Chèn tin nhắn vào ChatGPT thất bại");
+
+    if (autoSubmit) {
+      await new Promise((r) => setTimeout(r, 400));
+      const sendScript = `(() => {
+        const btn = document.querySelector('button[data-testid="send-button"]')
+          || document.querySelector('button[aria-label*="Send"]')
+          || document.querySelector('button[aria-label*="Gửi"]');
+        if (!btn) return { ok: false, error: 'Không tìm thấy nút gửi của ChatGPT' };
+        if (btn.disabled) return { ok: false, error: 'Nút gửi đang bị vô hiệu hóa' };
+        btn.click();
+        return { ok: true };
+      })()`;
+      const sendRes = await this.evaluateJs(tab.webSocketDebuggerUrl, sendScript);
+      if (!sendRes.ok) throw new Error(sendRes.error || "Bấm nút gửi ChatGPT thất bại");
+      return { ok: true, message: "Đã chèn và gửi tin nhắn vào ChatGPT qua CDP thành công" };
+    }
+    return { ok: true, message: "Đã chèn tin nhắn vào ô soạn thảo ChatGPT qua CDP (chưa gửi)" };
+  }
+
+  private spawnedChrome: ChildProcess | null = null;
+
+  /**
+   * Đảm bảo có Chrome mở cổng CDP: nếu chưa có thì thử GPM Login,
+   * cuối cùng tự spawn Chrome với profile riêng ~/.otter/cdp-profile.
+   */
+  async ensureCdpChrome(port?: number): Promise<boolean> {
+    const targetPort = port || this.defaultPort;
+    if (await this.isAvailable(targetPort)) return true;
+    if (await this.ensureProfileRunning(undefined, targetPort)) return true;
+
+    const chromePath = findChromeExecutable();
+    if (!chromePath) {
+      console.warn("[CDP Bridge] Không tìm thấy Chrome/Chromium để tự khởi động CDP.");
+      return false;
+    }
+
+    const profileDir = path.join(getOtterDir(), "cdp-profile");
+    fs.mkdirSync(profileDir, { recursive: true });
+
+    const headlessEnv = process.env.OTTER_CDP_HEADLESS;
+    const headless =
+      headlessEnv === "1" ||
+      (headlessEnv !== "0" &&
+        process.platform === "linux" &&
+        !process.env.DISPLAY &&
+        !process.env.WAYLAND_DISPLAY);
+
+    const args = [
+      `--remote-debugging-port=${targetPort}`,
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      ...(headless ? ["--headless=new"] : []),
+      "about:blank",
+    ];
+
+    try {
+      console.log(`[CDP Bridge] Đang tự khởi động Chrome CDP (cổng ${targetPort}, profile ${profileDir}${headless ? ", headless" : ""})...`);
+      const child = spawn(chromePath, args, { detached: true, stdio: "ignore" });
+      child.on("error", () => {});
+      child.unref();
+      this.spawnedChrome = child;
+    } catch (err: any) {
+      console.warn(`[CDP Bridge] Không khởi động được Chrome: ${err.message}`);
+      return false;
+    }
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (await this.isAvailable(targetPort)) return true;
+    }
+    console.warn(`[CDP Bridge] Chrome đã spawn nhưng cổng ${targetPort} chưa sẵn sàng sau 10 giây.`);
+    return false;
+  }
+
+  /**
    * Unified dispatcher thực thi các lệnh hành động giống như BrowserBridge
    */
   async execute(action: string, params: any = {}): Promise<any> {
@@ -588,6 +733,10 @@ export class CdpBridge {
         return this.click(params.index, params.urlPattern);
       case "type":
         return this.type(params.index, params.text, params.pressEnter, params.urlPattern);
+      case "select":
+        return this.select(params.index, params.option, params.urlPattern);
+      case "inject_chat_message":
+        return this.injectChatMessage(params.text ?? params.message ?? "", params.autoSubmit !== false);
       case "scroll":
         return this.scroll(params.direction, params.amount, params.urlPattern);
       case "back":

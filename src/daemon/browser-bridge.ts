@@ -1,15 +1,26 @@
 /**
- * Otter Browser Bridge (Dual-Engine: Extension + CDP)
- * 
- * Hỗ trợ 2 động cơ điều khiển trình duyệt song song:
- * 1. Engine Extension: Kết nối qua Chrome Extension Manifest V3 (WebSocket port 1993)
- * 2. Engine CDP: Kết nối trực tiếp qua Chrome DevTools Protocol (Port 9222 / GPM Login / Chrome Remote Debugging)
- * 
- * Chế độ "auto": Tự động ưu tiên Extension nếu có, tự động chuyển sang CDP nếu Extension không cắm.
+ * Otter Browser Bridge (Dual-Engine: CDP chính + Extension dự phòng)
+ *
+ * 1. Engine CDP (MẶC ĐỊNH): Chrome DevTools Protocol (Port 9222 / GPM Login /
+ *    Chrome tự spawn với profile ~/.otter/cdp-profile). Dễ quản lý, không cần
+ *    cài extension, chạy được headless/trên VPS.
+ * 2. Engine Extension: Chrome Extension Manifest V3 (WebSocket port 1993) —
+ *    giữ cho tích hợp sâu vào ChatGPT Web (HUD, sidepanel, chèn/đọc chat).
+ *
+ * Chế độ "cdp" (mặc định): chỉ CDP, tự mở Chrome CDP khi chưa có.
+ * Chế độ "auto": ưu tiên CDP, fallback Extension nếu CDP không sẵn sàng.
+ * Chế độ "extension": chỉ Extension như trước.
+ * Đổi mặc định qua biến môi trường OTTER_BROWSER_ENGINE=cdp|auto|extension.
  */
 import { cdpBridge } from "./cdp-bridge";
 
 export type BrowserEngineMode = "auto" | "extension" | "cdp";
+
+function defaultEngineMode(): BrowserEngineMode {
+  const env = (process.env.OTTER_BROWSER_ENGINE || "").trim().toLowerCase();
+  if (env === "extension" || env === "auto" || env === "cdp") return env;
+  return "cdp";
+}
 
 export const activeSockets = new Set<any>();
 
@@ -21,7 +32,7 @@ interface PendingRequest {
 
 export class BrowserBridge {
   private pendingRequests = new Map<string, PendingRequest>();
-  private engineMode: BrowserEngineMode = "auto";
+  private engineMode: BrowserEngineMode = defaultEngineMode();
 
   /**
    * Đặt chế độ động cơ: 'auto' | 'extension' | 'cdp'
@@ -69,9 +80,9 @@ export class BrowserBridge {
     } else if (this.engineMode === "cdp") {
       activeEngine = cdpAvailable ? "cdp" : "none";
     } else {
-      // auto: ưu tiên Extension nếu có socket kết nối, fallback sang CDP
-      if (extConnected) activeEngine = "extension";
-      else if (cdpAvailable) activeEngine = "cdp";
+      // auto: ưu tiên CDP (engine chính), fallback sang Extension
+      if (cdpAvailable) activeEngine = "cdp";
+      else if (extConnected) activeEngine = "extension";
       else activeEngine = "none";
     }
 
@@ -187,11 +198,19 @@ export class BrowserBridge {
       return this.executeViaExtension(action, params, timeoutMs);
     }
 
+    // Chưa có engine nào: thử tự mở Chrome CDP (trừ khi bị khóa ở chế độ extension).
+    if (this.engineMode !== "extension") {
+      const launched = await cdpBridge.ensureCdpChrome();
+      if (launched) {
+        return cdpBridge.execute(action, params);
+      }
+    }
+
     throw new Error(
       `Không có động cơ trình duyệt nào khả dụng!\n` +
-      `- Động cơ 1 (Extension): Chưa phát hiện WebSocket kết nối từ Chrome Extension Otter.\n` +
-      `- Động cơ 2 (CDP Port ${cdpBridge.getPort()}): Cổng CDP chưa mở.\n` +
-      `👉 Khắc phục: Bật tiện ích Otter trên Chrome HOẶC khởi động trình duyệt/GPM Login kèm tham số '--remote-debugging-port=${cdpBridge.getPort()}'.`
+      `- Động cơ chính (CDP Port ${cdpBridge.getPort()}): Cổng CDP chưa mở và tự khởi động Chrome không thành công.\n` +
+      `- Động cơ dự phòng (Extension): Chưa phát hiện WebSocket kết nối từ Chrome Extension Otter.\n` +
+      `👉 Khắc phục: Cài Google Chrome/Chromium trên máy này, HOẶC mở GPM Login, HOẶC bật tiện ích Otter trên Chrome.`
     );
   }
 
@@ -227,6 +246,23 @@ export class BrowserBridge {
       ...(injectionId ? { injectionId } : {}),
     }));
     return true;
+  }
+
+  /**
+   * Chèn tin nhắn vào ChatGPT: ưu tiên Extension (ổn định nhất trong trang),
+   * nếu Extension chưa kết nối thì dùng CDP (tự mở Chrome CDP khi cần).
+   */
+  async injectPromptSmart(text: string, autoSubmit = true, injectionId?: string): Promise<boolean> {
+    if (this.injectPrompt(text, autoSubmit, injectionId)) return true;
+    try {
+      if (!(await cdpBridge.isAvailable())) {
+        await cdpBridge.ensureCdpChrome();
+      }
+      const res = await cdpBridge.injectChatMessage(text, autoSubmit);
+      return Boolean(res.ok);
+    } catch {
+      return false;
+    }
   }
 }
 

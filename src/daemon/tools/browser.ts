@@ -253,11 +253,11 @@ export function registerBrowserTools(mcp: McpServer, onActivity?: (event: any) =
     },
     async ({ message, autoSubmit }) => {
       try {
-        const ok = browserBridge.injectPrompt(message, autoSubmit !== false);
+        const ok = await browserBridge.injectPromptSmart(message, autoSubmit !== false);
         return {
           content: [{
             type: "text",
-            text: ok ? "✅ Đã tự động gửi thông điệp vào ô chat ChatGPT Web thành công!" : "Lỗi: Extension chưa sẵn sàng để nhận thông điệp."
+            text: ok ? "✅ Đã tự động gửi thông điệp vào ô chat ChatGPT Web thành công!" : "Lỗi: Cả Extension lẫn CDP đều chưa sẵn sàng để nhận thông điệp (cần mở ChatGPT Web trong Chrome CDP hoặc bật Extension)."
           }]
         };
       } catch (err: any) {
@@ -364,11 +364,11 @@ export function registerBrowserTools(mcp: McpServer, onActivity?: (event: any) =
     }
   );
 
-  // Tool: Quản lý & đo lường trạng thái 2 động cơ trình duyệt (Extension vs CDP)
+  // Tool: Quản lý & đo lường trạng thái 2 động cơ trình duyệt (CDP chính vs Extension dự phòng)
   mcp.tool(
     "browser_engine_status",
     {
-      mode: z.enum(["auto", "extension", "cdp"]).optional().describe("Chuyển đổi chế độ động cơ: 'auto' (tự động fallback), 'extension' (chỉ dùng Extension), 'cdp' (chỉ dùng CDP trực tiếp)"),
+      mode: z.enum(["auto", "extension", "cdp"]).optional().describe("Chuyển đổi chế độ động cơ: 'cdp' (mặc định — chỉ CDP, tự mở Chrome CDP khi cần), 'auto' (ưu tiên CDP, fallback Extension), 'extension' (chỉ dùng Extension)"),
       benchmark: z.boolean().optional().describe("Có chạy đo đạc so sánh tốc độ phản hồi (latency) giữa 2 động cơ không (mặc định: false)")
     },
     async ({ mode, benchmark }) => {

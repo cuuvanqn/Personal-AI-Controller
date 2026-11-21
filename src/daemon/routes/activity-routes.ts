@@ -246,7 +246,7 @@ export async function handleActivityRoutes(
         const body: any = await req.json();
         const text = body.text || body.prompt;
         if (!text) return errorResponse("Thiếu nội dung text/prompt", 400);
-        const ok = browserBridge.injectPrompt(text, body.autoSubmit !== false);
+        const ok = await browserBridge.injectPromptSmart(text, body.autoSubmit !== false);
         return jsonResponse({ ok, message: ok ? "Đã gửi prompt vào ChatGPT Web thành công" : "Không tìm thấy kết nối tới tab ChatGPT" });
       } catch (err: any) {
         return errorResponse(err.message, 500);
