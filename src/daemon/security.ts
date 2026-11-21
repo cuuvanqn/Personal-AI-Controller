@@ -2,6 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
+import { validateOAuthAccessToken } from "./oauth-store";
 
 const allowedWorkspaces = new Set<string>([
   path.resolve(".")
@@ -328,11 +329,18 @@ export function isRequestAuthorized(req: Request, url: URL, clientIp?: string): 
     if (token && provided === token) {
       return true;
     }
+    // Access token OAuth cấp riêng cho từng client (thu hồi được từng client).
+    if (validateOAuthAccessToken(provided)) {
+      return true;
+    }
   }
 
   // Kiểm tra Query Parameter
   const tokenParam = url.searchParams.get("token");
   if (tokenParam && token && tokenParam.trim() === token) {
+    return true;
+  }
+  if (tokenParam && validateOAuthAccessToken(tokenParam.trim())) {
     return true;
   }
 

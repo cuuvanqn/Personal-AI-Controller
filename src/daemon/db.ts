@@ -139,6 +139,31 @@ export function initDatabase(dbPath: string = getDefaultDatabasePath()): Databas
   // EXISTS is safe on re-run; tasks columns are added only if missing, so
   // existing databases are migrated in place without losing data.
   db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      redirect_uris TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      access_token_hash TEXT NOT NULL,
+      refresh_token_hash TEXT,
+      scope TEXT,
+      created_at INTEGER NOT NULL,
+      access_expires_at INTEGER NOT NULL,
+      refresh_expires_at INTEGER,
+      revoked INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_access ON oauth_tokens(access_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id);
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS plans (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL DEFAULT 'chatgpt-web',

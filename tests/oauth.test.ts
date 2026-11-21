@@ -1,8 +1,22 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, afterAll } from "bun:test";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+// OTTER_HOME tạm để test OAuth ghi DB riêng, không đụng cấu hình thật.
+const prevOtterHome = process.env.OTTER_HOME;
+process.env.OTTER_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "otter-oauth-legacy-"));
+
+afterAll(() => {
+  // Khôi phục env để không làm bẩn các file test khác khi chạy chung suite.
+  if (prevOtterHome === undefined) delete process.env.OTTER_HOME;
+  else process.env.OTTER_HOME = prevOtterHome;
+});
+
 import { handleOAuthRoutes } from "../src/daemon/routes/oauth-routes";
 import { checkAuth } from "../src/daemon/routes/common";
-import { setAuthToken, ensureAuthToken } from "../src/daemon/security";
+import { setAuthToken, ensureAuthToken, isRequestAuthorized } from "../src/daemon/security";
 
 describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
   const testOrigin = "https://otter.example.com";
@@ -57,12 +71,14 @@ describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
     expect(html).toContain("Cho phép & Kết nối");
   });
 
-  it("handles auto_approve=1 and redirects with code, state, and iss (RFC 9207)", async () => {
+  it("handles auto_approve=1 from trusted network (localhost) and redirects with code, state, and iss (RFC 9207)", async () => {
+    // Bản sửa bảo mật 2026-11-21: auto_approve chỉ còn hiệu lực từ mạng tin cậy.
+    const localOrigin = "http://localhost:1993";
     const redirectTarget = "https://chatgpt.com/aip/plugin-test/oauth/callback";
-    const authUrl = `${testOrigin}/oauth/authorize?client_id=chatgpt&redirect_uri=${encodeURIComponent(redirectTarget)}&state=xyzState&auto_approve=1`;
+    const authUrl = `${localOrigin}/oauth/authorize?client_id=chatgpt&redirect_uri=${encodeURIComponent(redirectTarget)}&state=xyzState&auto_approve=1`;
     const req = new Request(authUrl, {
       method: "GET",
-      headers: { host: "otter.example.com", "x-forwarded-proto": "https" }
+      headers: { host: "localhost:1993" }
     });
     const res = await handleOAuthRoutes(req, new URL(req.url));
     expect(res).not.toBeNull();
@@ -74,22 +90,48 @@ describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
     const redirectUrl = new URL(location!);
     expect(redirectUrl.origin).toBe("https://chatgpt.com");
     expect(redirectUrl.searchParams.get("state")).toBe("xyzState");
-    expect(redirectUrl.searchParams.get("iss")).toBe(testOrigin);
+    expect(redirectUrl.searchParams.get("iss")).toBe(localOrigin);
     expect(redirectUrl.searchParams.get("code")).toMatch(/^otter_code_/);
+  });
+
+  it("ignores auto_approve=1 from public internet (shows consent screen instead)", async () => {
+    const redirectTarget = "https://chatgpt.com/callback";
+    const authUrl = `${testOrigin}/oauth/authorize?client_id=chatgpt&redirect_uri=${encodeURIComponent(redirectTarget)}&auto_approve=1`;
+    const req = new Request(authUrl, {
+      method: "GET",
+      headers: { host: "otter.example.com", "x-forwarded-proto": "https" }
+    });
+    const res = await handleOAuthRoutes(req, new URL(req.url));
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    const html = await res!.text();
+    expect(html).toContain("auth_token");
   });
 
   it("exchanges authorization code for Bearer access token on POST /oauth/token", async () => {
     setAuthToken("otter_secret_token_12345");
 
-    // 1. Tạo auth code qua auto_approve
+    // 1. Tạo auth code qua consent POST (bản sửa bảo mật: bắt buộc nhập Auth Token)
     const redirectTarget = "https://chatgpt.com/callback";
-    const authReq = new Request(`${testOrigin}/oauth/authorize?redirect_uri=${encodeURIComponent(redirectTarget)}&auto_approve=1`, {
-      method: "GET",
-      headers: { host: "otter.example.com", "x-forwarded-proto": "https" }
+    const authReq = new Request(`${testOrigin}/oauth/authorize`, {
+      method: "POST",
+      headers: {
+        host: "otter.example.com",
+        "x-forwarded-proto": "https",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        client_id: "chatgpt",
+        redirect_uri: redirectTarget,
+        scope: "all",
+        auth_token: "otter_secret_token_12345"
+      }).toString()
     });
     const authRes = await handleOAuthRoutes(authReq, new URL(authReq.url));
+    expect(authRes!.status).toBe(302);
     const location = authRes!.headers.get("location")!;
     const code = new URL(location).searchParams.get("code")!;
+    expect(code).toMatch(/^otter_code_/);
 
     // 2. Đổi code lấy Access Token
     const tokenReq = new Request(`${testOrigin}/oauth/token`, {
@@ -111,10 +153,18 @@ describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
     expect(tokenRes!.status).toBe(200);
 
     const tokenData = await tokenRes!.json();
-    expect(tokenData.access_token).toBe("otter_secret_token_12345");
+    // Bản sửa bảo mật: access token riêng từng client, KHÔNG phải token chủ.
+    expect(tokenData.access_token).toMatch(/^otter_at_/);
+    expect(tokenData.access_token).not.toBe("otter_secret_token_12345");
     expect(tokenData.token_type).toBe("Bearer");
     expect(tokenData.expires_in).toBeGreaterThan(0);
-    expect(tokenData.refresh_token).toBeDefined();
+    expect(tokenData.refresh_token).toMatch(/^otter_rt_/);
+
+    // Access token OAuth dùng được cho API qua isRequestAuthorized.
+    const apiReq = new Request(`${testOrigin}/mcp`, {
+      headers: { host: "otter.example.com", Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    expect(isRequestAuthorized(apiReq, new URL(apiReq.url))).toBe(true);
 
     // 3. Mã code không thể tái sử dụng (Single-use security)
     const replayReq = new Request(`${testOrigin}/oauth/token`, {
@@ -137,16 +187,26 @@ describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
     const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
 
-    // 2. Đăng ký auth code kèm PKCE challenge
+    // 2. Đăng ký auth code kèm PKCE challenge (qua consent POST + Auth Token)
     const redirectTarget = "https://chatgpt.com/callback";
-    const authReq = new Request(
-      `${testOrigin}/oauth/authorize?redirect_uri=${encodeURIComponent(redirectTarget)}&code_challenge=${challenge}&code_challenge_method=S256&auto_approve=1`,
-      {
-        method: "GET",
-        headers: { host: "otter.example.com", "x-forwarded-proto": "https" }
-      }
-    );
+    const authReq = new Request(`${testOrigin}/oauth/authorize`, {
+      method: "POST",
+      headers: {
+        host: "otter.example.com",
+        "x-forwarded-proto": "https",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        client_id: "chatgpt",
+        redirect_uri: redirectTarget,
+        scope: "all",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        auth_token: "otter_secret_token_12345"
+      }).toString()
+    });
     const authRes = await handleOAuthRoutes(authReq, new URL(authReq.url));
+    expect(authRes!.status).toBe(302);
     const location = authRes!.headers.get("location")!;
     const code = new URL(location).searchParams.get("code")!;
 

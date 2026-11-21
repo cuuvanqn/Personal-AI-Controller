@@ -1,10 +1,28 @@
 /**
  * OAuth 2.0 / 2.1 Provider Routes for OpenAI Plugins & ChatGPT Custom GPT Actions
  * Complies with RFC 6749, RFC 7636 (PKCE S256), RFC 8414, RFC 9207 (iss), RFC 9728
+ *
+ * Bản sửa bảo mật 2026-11-21:
+ * - Refresh token bắt buộc đối chiếu hash + xoay vòng (trước đây trả token chủ vô điều kiện).
+ * - Access token sinh riêng từng client, lưu hash, thu hồi được (không dùng token chủ).
+ * - Consent bắt buộc nhập Auth Token của chủ máy; auto_approve chỉ còn cho mạng tin cậy.
+ * - Validate redirect_uri (https hoặc localhost; khớp danh sách đã đăng ký nếu có).
+ * - Rate limit cho /oauth/authorize (POST) và /oauth/token.
  */
 import * as crypto from "node:crypto";
-import { ensureAuthToken } from "../security";
+import { getAuthToken, isTrustedHostOrIp } from "../security";
 import { getCorsHeaders, jsonResponse } from "./common";
+import { matchDaemonRoute } from "./lcg-routes";
+import { allowLicenseRequest } from "../license/rate-limit";
+import {
+  registerOAuthClient,
+  isRedirectUriAllowed,
+  isValidRedirectUri,
+  issueOAuthTokens,
+  rotateOAuthRefreshToken,
+  revokeOAuthClient,
+  listOAuthClients,
+} from "../oauth-store";
 
 export interface AuthCodeRecord {
   code: string;
@@ -54,6 +72,30 @@ export function getCanonicalOrigin(req: Request, url: URL): string {
   return `${proto}://${host}`;
 }
 
+function getClientIp(req: Request): string {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip")?.trim() ||
+    "unknown"
+  );
+}
+
+/** Request đến từ mạng tin cậy (localhost/Tailscale/LAN) — cùng logic với isRequestAuthorized. */
+function isTrustedRequest(req: Request, url: URL): boolean {
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
+  const ip = getClientIp(req);
+  const isHostTrusted = isTrustedHostOrIp(host);
+  const isClientTrusted = ip !== "unknown" ? isTrustedHostOrIp(ip) : isHostTrusted;
+  return isHostTrusted && isClientTrusted;
+}
+
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
 /**
  * Xử lý các routes OAuth và Discovery Metadata
  */
@@ -94,19 +136,29 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       body = await req.json();
     } catch {}
 
-    const clientId = "otter_client_" + crypto.randomBytes(12).toString("hex");
     const clientName = body.client_name || "ChatGPT Client";
-    const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
+    const redirectUris: string[] = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
     const tokenEndpointAuthMethod = body.token_endpoint_auth_method || "none";
 
+    // Chỉ chấp nhận redirect_uri https hoặc http://localhost (RFC 8252).
+    const invalidUri = redirectUris.find((u) => !isValidRedirectUri(u));
+    if (invalidUri) {
+      return jsonResponse(
+        { error: "invalid_redirect_uri", error_description: `redirect_uri không hợp lệ (chỉ https hoặc http://localhost): ${invalidUri}` },
+        400, {}, req
+      );
+    }
+
+    const client = registerOAuthClient(clientName, redirectUris);
+
     return jsonResponse({
-      client_id: clientId,
-      client_name: clientName,
-      redirect_uris: redirectUris,
+      client_id: client.clientId,
+      client_name: client.clientName,
+      redirect_uris: client.redirectUris,
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: tokenEndpointAuthMethod,
-      client_id_issued_at: Math.floor(Date.now() / 1000)
+      client_id_issued_at: Math.floor(client.createdAt / 1000)
     }, 201, {}, req);
   }
 
@@ -125,8 +177,16 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       return new Response("Missing redirect_uri parameter", { status: 400, headers: getCorsHeaders(req) });
     }
 
-    // Nếu người dùng chọn auto approve
-    if (autoApprove) {
+    if (!isRedirectUriAllowed(clientId, redirectUri)) {
+      return new Response("redirect_uri không hợp lệ hoặc không nằm trong danh sách đã đăng ký của client", {
+        status: 400,
+        headers: getCorsHeaders(req),
+      });
+    }
+
+    // auto_approve chỉ còn hiệu lực với request từ mạng tin cậy (localhost/Tailscale/LAN).
+    // Từ internet công khai bắt buộc qua consent + nhập Auth Token.
+    if (autoApprove && isTrustedRequest(req, url)) {
       const code = "otter_code_" + crypto.randomBytes(20).toString("hex");
       saveAuthCode({
         code,
@@ -287,7 +347,12 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       <input type="hidden" name="scope" value="${escapeHtml(scope)}">
       ${codeChallenge ? `<input type="hidden" name="code_challenge" value="${escapeHtml(codeChallenge)}">` : ""}
       ${codeChallengeMethod ? `<input type="hidden" name="code_challenge_method" value="${escapeHtml(codeChallengeMethod)}">` : ""}
-      
+
+      ${url.searchParams.get("error") === "invalid_token" ? `<div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; padding:10px 14px; border-radius:10px; font-size:13px; margin-bottom:14px;">Auth Token không đúng. Vui lòng kiểm tra lại trong Dashboard Otter hoặc file ~/.otter/auth.token.</div>` : ""}
+
+      <label style="display:block; font-size:13px; color:var(--text-muted); margin-bottom:6px;">Nhập Auth Token của Otter để xác nhận bạn là chủ máy này (xem trong Dashboard hoặc file ~/.otter/auth.token):</label>
+      <input type="password" name="auth_token" required autocomplete="off" placeholder="otter_..." style="width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; margin-bottom:16px;">
+
       <div class="actions">
         <button type="button" class="btn-deny" onclick="window.history.back()">Hủy bỏ</button>
         <button type="submit" class="btn-approve">Cho phép & Kết nối</button>
@@ -308,12 +373,17 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
 
   // 4. OAuth Authorize (POST: Người dùng bấm Chấp thuận từ Consent Screen)
   if (url.pathname === "/oauth/authorize" && req.method === "POST") {
+    if (!allowLicenseRequest(`oauth-authorize:${getClientIp(req)}`, 10, 60_000)) {
+      return jsonResponse({ error: "rate_limited", error_description: "Quá nhiều lần thử. Vui lòng đợi 1 phút." }, 429, {}, req);
+    }
+
     let clientId = "chatgpt";
     let redirectUri = "";
     let state = "";
     let scope = "all";
     let codeChallenge: string | undefined;
     let codeChallengeMethod: string | undefined;
+    let authTokenInput = "";
 
     const contentType = req.headers.get("content-type") || "";
     if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -325,6 +395,7 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       scope = form.get("scope") || scope;
       codeChallenge = form.get("code_challenge") || undefined;
       codeChallengeMethod = form.get("code_challenge_method") || undefined;
+      authTokenInput = form.get("auth_token") || "";
     } else {
       try {
         const body = await req.json();
@@ -334,11 +405,34 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
         scope = body.scope || scope;
         codeChallenge = body.code_challenge || undefined;
         codeChallengeMethod = body.code_challenge_method || undefined;
+        authTokenInput = body.auth_token || "";
       } catch {}
     }
 
     if (!redirectUri) {
       return new Response("Missing redirect_uri", { status: 400, headers: getCorsHeaders(req) });
+    }
+
+    if (!isRedirectUriAllowed(clientId, redirectUri)) {
+      return new Response("redirect_uri không hợp lệ hoặc không nằm trong danh sách đã đăng ký của client", {
+        status: 400,
+        headers: getCorsHeaders(req),
+      });
+    }
+
+    // Xác minh chủ máy: bắt buộc nhập đúng Auth Token mới được cấp code.
+    const expectedToken = getAuthToken();
+    if (!expectedToken || !authTokenInput || !timingSafeEqualStr(authTokenInput.trim(), expectedToken)) {
+      const back = new URL(`${origin}/oauth/authorize`);
+      back.searchParams.set("client_id", clientId);
+      back.searchParams.set("redirect_uri", redirectUri);
+      back.searchParams.set("response_type", "code");
+      if (state) back.searchParams.set("state", state);
+      back.searchParams.set("scope", scope);
+      if (codeChallenge) back.searchParams.set("code_challenge", codeChallenge);
+      if (codeChallengeMethod) back.searchParams.set("code_challenge_method", codeChallengeMethod);
+      back.searchParams.set("error", "invalid_token");
+      return Response.redirect(back.toString(), 302);
     }
 
     const code = "otter_code_" + crypto.randomBytes(20).toString("hex");
@@ -363,11 +457,16 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
 
   // 5. OAuth Token Endpoint (POST: ChatGPT backend đổi code lấy Access Token)
   if (url.pathname === "/oauth/token" && req.method === "POST") {
+    if (!allowLicenseRequest(`oauth-token:${getClientIp(req)}`, 20, 60_000)) {
+      return jsonResponse({ error: "rate_limited", error_description: "Quá nhiều lần thử. Vui lòng đợi 1 phút." }, 429, {}, req);
+    }
+
     let grantType = "";
     let code = "";
     let redirectUri = "";
     let clientId = "";
     let codeVerifier = "";
+    let refreshTokenInput = "";
 
     const contentType = req.headers.get("content-type") || "";
     if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -378,6 +477,7 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       redirectUri = form.get("redirect_uri") || "";
       clientId = form.get("client_id") || "";
       codeVerifier = form.get("code_verifier") || "";
+      refreshTokenInput = form.get("refresh_token") || "";
     } else {
       try {
         const body = await req.json();
@@ -386,18 +486,35 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
         redirectUri = body.redirect_uri || "";
         clientId = body.client_id || "";
         codeVerifier = body.code_verifier || "";
+        refreshTokenInput = body.refresh_token || "";
       } catch {}
     }
 
-    // Hỗ trợ refresh_token
+    // Refresh token: bắt buộc đối chiếu hash + xoay vòng. Không còn trả token chủ vô điều kiện.
     if (grantType === "refresh_token") {
-      const token = ensureAuthToken();
+      if (!refreshTokenInput) {
+        return jsonResponse({
+          error: "invalid_request",
+          error_description: "Thiếu tham số refresh_token"
+        }, 400, {}, req);
+      }
+      const rotated = rotateOAuthRefreshToken(refreshTokenInput);
+      if (!rotated) {
+        return jsonResponse({
+          error: "invalid_grant",
+          error_description: "Refresh token không hợp lệ, đã hết hạn hoặc đã bị thu hồi"
+        }, 400, {}, req);
+      }
       return jsonResponse({
-        access_token: token,
+        access_token: rotated.accessToken,
         token_type: "Bearer",
-        expires_in: 30 * 24 * 3600, // 30 ngày
+        expires_in: rotated.expiresIn,
+        refresh_token: rotated.refreshToken,
         scope: "all"
-      }, 200, {}, req);
+      }, 200, {
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache"
+      }, req);
     }
 
     if (grantType !== "authorization_code") {
@@ -444,19 +561,37 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       }
     }
 
-    // Cấp access token hợp lệ của Otter
-    const accessToken = ensureAuthToken();
+    // Cấp cặp token riêng cho client (không dùng token chủ — thu hồi riêng được)
+    const issued = issueOAuthTokens(record.clientId, record.scope || "all");
 
     return jsonResponse({
-      access_token: accessToken,
+      access_token: issued.accessToken,
       token_type: "Bearer",
-      expires_in: 30 * 24 * 3600, // 30 ngày
-      refresh_token: "otter_rf_" + crypto.randomBytes(24).toString("hex"),
+      expires_in: issued.expiresIn,
+      refresh_token: issued.refreshToken,
       scope: record.scope || "all"
     }, 200, {
       "Cache-Control": "no-store",
       "Pragma": "no-cache"
     }, req);
+  }
+
+  // 6. Quản trị client OAuth đã kết nối (Dashboard — KHÔNG public, qua checkAuth)
+  if (matchDaemonRoute(url.pathname, "OAUTH_CLIENTS") && req.method === "GET") {
+    return jsonResponse({ clients: listOAuthClients() }, 200, {}, req);
+  }
+
+  if (matchDaemonRoute(url.pathname, "OAUTH_REVOKE") && req.method === "POST") {
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {}
+    const clientId = String(body.client_id || body.clientId || "").trim();
+    if (!clientId) {
+      return jsonResponse({ error: "Thiếu client_id" }, 400, {}, req);
+    }
+    const revoked = revokeOAuthClient(clientId);
+    return jsonResponse({ ok: true, revoked }, 200, {}, req);
   }
 
   return null;

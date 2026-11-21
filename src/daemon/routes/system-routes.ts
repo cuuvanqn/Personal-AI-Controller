@@ -377,6 +377,12 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
             </div>
           </div>
 
+          <div class="tg-box">
+            <h4 style="margin:0 0 6px 0; color:#e2e8f0;" data-i18n="oauth_heading">🔐 AI Đã Kết Nối (OAuth)</h4>
+            <p style="margin:4px 0 10px; font-size:13px; color:#94a3b8;" data-i18n="oauth_desc">Các AI/ứng dụng đã được cấp quyền qua OAuth. Thu hồi sẽ ngắt kết nối của ứng dụng đó ngay lập tức.</p>
+            <div id="oauth-list" style="display:flex; flex-direction:column; gap:6px;">…</div>
+          </div>
+
           <p><strong data-i18n="endpoints_title">Điểm cuối kết nối (Endpoints):</strong></p>
           <pre>SSE: /sse&#10;Streamable HTTP: /mcp&#10;WebSocket: ws://${url.host}/api/activity/v1/stream</pre>
           <p><span data-i18n="openapi_label">Tài liệu OpenAPI:</span> <a href="/openapi.json" target="_blank">/openapi.json</a></p>
@@ -417,6 +423,8 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               upd_heading: "⬆️ Cập Nhật Daemon",
               upd_check: "Kiểm tra cập nhật",
               upd_apply: "Cập nhật ngay",
+              oauth_heading: "🔐 AI Đã Kết Nối (OAuth)",
+              oauth_desc: "Các AI/ứng dụng đã được cấp quyền qua OAuth. Thu hồi sẽ ngắt kết nối của ứng dụng đó ngay lập tức.",
               endpoints_title: "Điểm cuối kết nối (Endpoints):",
               openapi_label: "Tài liệu OpenAPI:"
             },
@@ -453,6 +461,8 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
               upd_heading: "⬆️ Daemon Updates",
               upd_check: "Check for updates",
               upd_apply: "Update now",
+              oauth_heading: "🔐 Connected AIs (OAuth)",
+              oauth_desc: "AIs/apps granted access via OAuth. Revoking disconnects that app immediately.",
               endpoints_title: "Connection Endpoints:",
               openapi_label: "OpenAPI Documentation:"
             }
@@ -583,10 +593,40 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
             }).catch(function(e) { alert(e.message); });
           }
 
+          function loadOAuthClients() {
+            fetch('/api/oauth/clients').then(function(r) { return r.json(); }).then(function(res) {
+              var box = document.getElementById('oauth-list');
+              if (!box) return;
+              var en = tgLang() === 'en';
+              var clients = res.clients || [];
+              if (!clients.length) {
+                box.innerHTML = '<span style="color:#94a3b8; font-size:13px;">' + (en ? 'No OAuth clients yet.' : 'Chưa có AI nào kết nối qua OAuth.') + '</span>';
+                return;
+              }
+              var html = '';
+              clients.forEach(function(c) {
+                var meta = c.activeTokens + (en ? ' active token(s)' : ' token đang hiệu lực');
+                if (c.lastIssuedAt) meta += ' · ' + new Date(c.lastIssuedAt).toLocaleDateString();
+                html += '<div class="tg-row">'
+                  + '<div class="tg-info"><div class="tg-name">' + c.clientName + '</div>'
+                  + '<div class="tg-desc">' + c.clientId + '</div></div>'
+                  + '<div class="tg-meta">' + meta + '</div>'
+                  + '<button class="tg-preset" style="background:#7f1d1d; color:#fecaca;" onclick="revokeOAuthClient(\'' + c.clientId + '\')">' + (en ? 'Revoke' : 'Thu hồi') + '</button></div>';
+              });
+              box.innerHTML = html;
+            }).catch(function() {});
+          }
+          function revokeOAuthClient(clientId) {
+            if (!confirm(tgLang() === 'en' ? 'Revoke this client? It will be disconnected immediately.' : 'Thu hồi client này? Kết nối của nó sẽ bị ngắt ngay.')) return;
+            fetch('/api/oauth/revoke', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId }) })
+              .then(function(r) { return r.json(); }).then(function() { loadOAuthClients(); }).catch(function(e) { alert(e.message); });
+          }
+
           const savedLang = localStorage.getItem("otter_lang") || (navigator.language.startsWith("vi") ? "vi" : "en");
           setLang(savedLang);
           loadToolGroups();
           loadUpdateStatus();
+          loadOAuthClients();
         </script>
       </body>
       </html>
