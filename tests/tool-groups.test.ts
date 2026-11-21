@@ -84,4 +84,38 @@ describe("tool-groups", () => {
     const state = setToolGroupsEnabled({ "nhom-khong-ton-tai": false } as any);
     expect(state.groups.every((g) => g.enabled)).toBe(true);
   });
+
+  test("AI tự bật/tắt qua MCP tool tool_groups_list/set", async () => {
+    const { client } = await connectClient();
+
+    const listRes: any = await client.callTool({ name: "tool_groups_list", arguments: {} });
+    const state = JSON.parse(listRes.content[0].text);
+    expect(state.groups.find((g: any) => g.id === "fb").enabled).toBe(true);
+
+    // Tắt nhóm fb bằng tool, kiểm tra tools/list mất tool fb ngay.
+    await client.callTool({ name: "tool_groups_set", arguments: { group: "fb", enabled: false } });
+    let names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("fb_post_start");
+    expect(names).toContain("tool_groups_set");
+
+    // Tắt luôn core — tool_groups_set vẫn phải gọi được (luôn bật).
+    await client.callTool({ name: "tool_groups_set", arguments: { group: "core", enabled: false } });
+    names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("execute_terminal_command");
+    expect(names).toContain("tool_groups_set");
+
+    // Preset code: bật core+code+agents+skills, tắt phần còn lại.
+    await client.callTool({ name: "tool_groups_set", arguments: { preset: "code" } });
+    names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("execute_terminal_command");
+    expect(names).toContain("code_search_text");
+    expect(names).not.toContain("fb_post_start");
+    expect(names).not.toContain("vps_ssh_execute");
+
+    // Trả về trạng thái bật tất cả cho các test khác / dọn dẹp.
+    await client.callTool({ name: "tool_groups_set", arguments: { preset: "all" } });
+    names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).toContain("fb_post_start");
+    await client.close();
+  });
 });

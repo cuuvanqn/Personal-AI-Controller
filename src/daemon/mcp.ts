@@ -34,7 +34,8 @@ import {
   registerGpmTools,
   registerSocialBotTools,
   registerAntigravityCdpTools,
-  registerMetaTools
+  registerMetaTools,
+  registerToolGroupsTools
 } from "./tools";
 
 /**
@@ -46,6 +47,10 @@ export function createMcpServer(onActivity?: (event: any) => void): McpServer {
     name: "Otter",
     version: "2.1.0"
   });
+
+  // Tool hệ thống bật/tắt nhóm MCP (tool_groups_list/set): đăng ký TRƯỚC
+  // capture để luôn khả dụng, AI không tự khóa mình ra ngoài được.
+  registerToolGroupsTools(mcp, onActivity);
 
   // Bọc mcp.tool để ghi lại RegisteredTool theo nhóm (bật/tắt từ Dashboard,
   // xem tool-groups.ts). setGroup() phải gọi trước mỗi registerXTools.

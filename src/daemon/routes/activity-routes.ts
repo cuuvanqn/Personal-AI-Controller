@@ -36,6 +36,12 @@ import {
   controlAntigravity,
 } from "../tools/antigravity-cdp-tools";
 import {
+  getToolGroupsState,
+  setToolGroupsEnabled,
+  applyToolGroupPreset,
+  TOOL_GROUP_IDS,
+} from "../tool-groups";
+import {
   getSocialBotStatus,
   sendSocialMessage,
   startSocialBot,
@@ -777,6 +783,38 @@ export async function handleActivityRoutes(
       return jsonResponse({ ok: true, tool: toolName, result: res });
     } catch (err: any) {
       return errorResponse(err.message, 500);
+    }
+  }
+
+  // 8c. Nhóm MCP tools — xem trạng thái + bật/tắt (cho AI tự cấu hình)
+  if (url.pathname === "/api/activity/v1/tool-groups" && req.method === "GET") {
+    return jsonResponse(getToolGroupsState());
+  }
+
+  if (url.pathname === "/api/activity/v1/tool-groups/set" && req.method === "POST") {
+    try {
+      const body: any = await req.json();
+      if (typeof body.preset === "string") {
+        return jsonResponse({ ok: true, ...applyToolGroupPreset(body.preset) });
+      }
+      if (body.groups && typeof body.groups === "object") {
+        for (const id of Object.keys(body.groups)) {
+          if (!TOOL_GROUP_IDS.has(id)) return errorResponse(`Nhóm không tồn tại: ${id}`, 400);
+        }
+        return jsonResponse({ ok: true, ...setToolGroupsEnabled(body.groups) });
+      }
+      if (typeof body.group === "string") {
+        if (!TOOL_GROUP_IDS.has(body.group)) {
+          return errorResponse(`Nhóm không tồn tại: ${body.group}`, 400);
+        }
+        return jsonResponse({
+          ok: true,
+          ...setToolGroupsEnabled({ [body.group]: body.enabled !== false }),
+        });
+      }
+      return errorResponse("Thiếu tham số: cần preset, group+enabled, hoặc groups", 400);
+    } catch (err: any) {
+      return errorResponse(err.message, 400);
     }
   }
 

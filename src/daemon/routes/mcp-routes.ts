@@ -45,6 +45,12 @@ import {
   readAntigravityChat,
   controlAntigravity
 } from "../tools/antigravity-cdp-tools";
+import {
+  getToolGroupsState,
+  setToolGroupsEnabled,
+  applyToolGroupPreset,
+  TOOL_GROUP_IDS,
+} from "../tool-groups";
 
 export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity: (event: any) => void): Promise<Response | null> {
   // 1. External MCP Tools Proxy (Custom GPT Actions & REST API)
@@ -271,6 +277,36 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
           return errorResponse(err.message, 500);
         }
       }
+
+      if (toolName === "tool_groups_list") {
+        return jsonResponse(getToolGroupsState());
+      }
+
+      if (toolName === "tool_groups_set") {
+        try {
+          if (typeof body.preset === "string") {
+            return jsonResponse({ ok: true, ...applyToolGroupPreset(body.preset) });
+          }
+          if (body.groups && typeof body.groups === "object") {
+            for (const id of Object.keys(body.groups)) {
+              if (!TOOL_GROUP_IDS.has(id)) return errorResponse(`Nhóm không tồn tại: ${id}`, 400);
+            }
+            return jsonResponse({ ok: true, ...setToolGroupsEnabled(body.groups) });
+          }
+          if (typeof body.group === "string") {
+            if (!TOOL_GROUP_IDS.has(body.group)) {
+              return errorResponse(`Nhóm không tồn tại: ${body.group}`, 400);
+            }
+            return jsonResponse({
+              ok: true,
+              ...setToolGroupsEnabled({ [body.group]: body.enabled !== false }),
+            });
+          }
+          return errorResponse("Thiếu tham số: cần preset, group+enabled, hoặc groups", 400);
+        } catch (err: any) {
+          return errorResponse(err.message, 400);
+        }
+      }
     }
 
     const result = await executeExternalTool(serverKey, toolName, body, handleMcpActivity);
@@ -299,6 +335,18 @@ export async function handleMcpRoutes(req: Request, url: URL, handleMcpActivity:
     const serverBaseUrl = `${proto}://${url.host}`;
 
     const builtInTools = [
+        {
+          name: "tool_groups_list",
+          qualifiedName: "otter_core_tool_groups_list",
+          title: "Danh sách nhóm MCP tools & trạng thái bật/tắt",
+          description: "Liệt kê các nhóm MCP tools (core, browser, code, fb, meta, vps, db, agents...) kèm trạng thái bật/tắt, số tool và ước lượng token schema để AI quyết định bật/tắt cho nhẹ context."
+        },
+        {
+          name: "tool_groups_set",
+          qualifiedName: "otter_core_tool_groups_set",
+          title: "Bật/tắt nhóm MCP tools theo nhu cầu",
+          description: "AI tự bật/tắt nhóm MCP tools bằng preset (all/minimal/code/fb) hoặc từng nhóm; thay đổi áp dụng ngay cho mọi phiên MCP đang kết nối."
+        },
         {
           name: "browser_engine_status",
           qualifiedName: "otter_core_browser_engine_status",

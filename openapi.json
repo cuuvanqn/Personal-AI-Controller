@@ -2212,6 +2212,48 @@
         },
         "responses": { "200": { "description": "Kết quả patch tệp" } }
       }
+    },
+    "/api/activity/v1/tool-groups": {
+      "get": {
+        "operationId": "toolGroupsList",
+        "summary": "Danh sách nhóm MCP tools & trạng thái bật/tắt",
+        "description": "Liệt kê các nhóm MCP tools của Otter (core, browser, code, fb, meta, vps, db, agents, gpm, social, antigravity, muse, skills, motion, external) kèm trạng thái bật/tắt, số tool và ước lượng token schema của từng nhóm, cùng tổng số tool/token đang bật.",
+        "responses": {
+          "200": {
+            "description": "Trạng thái các nhóm MCP tools",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/api/activity/v1/tool-groups/set": {
+      "post": {
+        "operationId": "toolGroupsSet",
+        "summary": "Bật/tắt nhóm MCP tools theo nhu cầu",
+        "description": "Bật/tắt nhóm MCP tools bằng preset (all/minimal/code/fb), từng nhóm (group+enabled) hoặc nhiều nhóm (groups). Thay đổi áp dụng ngay cho mọi phiên MCP đang kết nối và được lưu bền vững.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "preset": { "type": "string", "enum": ["all", "minimal", "code", "fb"], "description": "Preset bật nhanh (ưu tiên hơn group/groups)" },
+                  "group": { "type": "string", "description": "Một nhóm cần bật/tắt, ví dụ: fb, code, browser, vps, meta, agents" },
+                  "enabled": { "type": "boolean", "description": "true = bật, false = tắt (đi kèm group)" },
+                  "groups": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "Bật/tắt nhiều nhóm cùng lúc, ví dụ {\"fb\": false, \"code\": true}" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Trạng thái mới của các nhóm MCP tools",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
     }
   }
 }

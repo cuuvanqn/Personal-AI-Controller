@@ -24,6 +24,7 @@ export { registerFbGroupPostTools } from "./fb-group-post-tools";
 export { registerMuseTools } from "./muse-tools";
 export { registerFbMediaPostTools } from "./fb-media-post-tools";
 export { registerMetaTools, callMetaRpc } from "./meta-tools";
+export { registerToolGroupsTools } from "./tool-groups-tools";
 export { registerGpmTools } from "./gpm-tools";
 export { registerSocialBotTools } from "./social-bot-tools";
 export {
