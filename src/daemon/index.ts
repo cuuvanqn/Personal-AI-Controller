@@ -453,6 +453,9 @@ const server = Bun.serve<WsClientData>({
       url.pathname === "/api/health" ||
       url.pathname === "/activity" ||
       url.pathname === "/dashboard" ||
+      url.pathname.startsWith("/dashboard/assets/") ||
+      url.pathname === "/dashboard/favicon.svg" ||
+      url.pathname === "/dashboard/icons.svg" ||
       url.pathname.startsWith("/storage/tasks/") ||
       url.pathname === "/api/media/file" ||
       url.pathname.startsWith("/storage/media/") ||

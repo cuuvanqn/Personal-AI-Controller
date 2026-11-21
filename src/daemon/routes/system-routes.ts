@@ -253,6 +253,38 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
     });
   }
 
+  // 5.5 Dashboard mới (React + Astryx) — phục vụ bản build tĩnh trong deploy/dashboard/
+  //     (build từ thư mục dashboard/: npm run build rồi copy dist/ sang deploy/dashboard/).
+  //     Nếu chưa có bản build thì rơi xuống Dashboard HTML inline cũ ở mục 6.
+  if (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) {
+    const rel = url.pathname === "/dashboard" || url.pathname === "/dashboard/"
+      ? "index.html"
+      : url.pathname.slice("/dashboard/".length);
+    // Chặn path traversal: chỉ phục vụ file nằm trong deploy/dashboard/
+    if (rel && !rel.includes("..")) {
+      const dashPath = path.join(process.cwd(), "deploy", "dashboard", rel);
+      const dashFile = Bun.file(dashPath);
+      if (await dashFile.exists()) {
+        const ext = path.extname(dashPath).toLowerCase();
+        const contentType = ext === ".html" ? "text/html; charset=utf-8" :
+                            ext === ".js" ? "text/javascript; charset=utf-8" :
+                            ext === ".css" ? "text/css; charset=utf-8" :
+                            ext === ".svg" ? "image/svg+xml" :
+                            ext === ".json" ? "application/json" :
+                            ext === ".png" ? "image/png" :
+                            ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
+                            ext === ".woff2" ? "font/woff2" : "application/octet-stream";
+        return new Response(dashFile, {
+          headers: { "Content-Type": contentType, ...corsHeaders }
+        });
+      }
+    }
+    if (url.pathname !== "/dashboard" && url.pathname !== "/dashboard/") {
+      return errorResponse("Không tìm thấy tài nguyên Dashboard", 404);
+    }
+    // /dashboard chưa có bản build -> rơi xuống HTML inline cũ bên dưới.
+  }
+
   // 6. Dashboard HTML (Hỗ trợ song ngữ Tiếng Việt & Tiếng Anh)
   if (url.pathname === "/dashboard" || url.pathname === "/status" || url.pathname === "/activity") {
     const tunnel = getQuickTunnelStatus();
