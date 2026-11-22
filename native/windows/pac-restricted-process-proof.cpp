@@ -74,7 +74,7 @@ static void probeDesktopAsRestricted(HANDLE restricted) {
   HWINSTA station = OpenWindowStationW(stationName, FALSE, WINSTA_ALL_ACCESS);
   const DWORD stationError = station ? 0 : GetLastError();
   if (station) CloseWindowStation(station);
-  HDESK desk = OpenDesktopW(desktopName, 0, FALSE, DESKTOP_ALL_ACCESS);
+  HDESK desk = OpenDesktopW(desktopName, 0, FALSE, STANDARD_RIGHTS_REQUIRED | 0x01FF);
   const DWORD desktopError = desk ? 0 : GetLastError();
   if (desk) CloseDesktop(desk);
   RevertToSelf();
