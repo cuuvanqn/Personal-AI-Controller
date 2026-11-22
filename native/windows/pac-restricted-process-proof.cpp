@@ -103,14 +103,26 @@ int wmain(int argc, wchar_t** argv) {
   const std::wstring userSid(userSidRaw);
   LocalFree(userSidRaw);
 
-  BYTE worldSidBuffer[SECURITY_MAX_SID_SIZE] = {};
-  DWORD worldSize = sizeof(worldSidBuffer);
-  if (!CreateWellKnownSid(WinWorldSid, nullptr, worldSidBuffer, &worldSize))
-    return fail("CreateWellKnownSid");
-  SID_AND_ATTRIBUTES world = { worldSidBuffer, 0 };
+  // Common Windows objects may grant any of: RESTRICTED CODE,
+  // Authenticated Users, Everyone or BUILTIN\Users. The restricted access
+  // check allows access via any restricting SID but still requires the
+  // normal token access check too. Owner-only sentinel matches none.
+  WELL_KNOWN_SID_TYPE types[4] = {
+    WinRestrictedCodeSid, WinAuthenticatedUserSid, WinWorldSid, WinBuiltinUsersSid
+  };
+  BYTE sidBuffers[4][SECURITY_MAX_SID_SIZE] = {};
+  SID_AND_ATTRIBUTES restrictSids[4] = {};
+  for (int i = 0; i < 4; ++i) {
+    DWORD size = SECURITY_MAX_SID_SIZE;
+    if (!CreateWellKnownSid(types[i], nullptr, sidBuffers[i], &size))
+      return fail("Create restricting SID");
+    restrictSids[i].Sid = sidBuffers[i];
+    restrictSids[i].Attributes = 0;
+  }
   SafeHandle restricted;
   if (!CreateRestrictedToken(currentToken.h, DISABLE_MAX_PRIVILEGE,
-                             0, nullptr, 0, nullptr, 1, &world, &restricted.h))
+                             0, nullptr, 0, nullptr, 4, restrictSids,
+                             &restricted.h))
     return fail("CreateRestrictedToken primary");
   if (!IsTokenRestricted(restricted.h)) return fail("primary token unrestricted");
 
