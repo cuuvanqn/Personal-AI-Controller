@@ -393,12 +393,16 @@ onExternalServersReloaded(() => {
   });
 });
 
+// PAC defaults to loopback even when the machine has a LAN interface.
+// Explicit remote access requires a separately reviewed architecture.
+ensureAuthToken();
 const server = Bun.serve<WsClientData>({
+  hostname: "127.0.0.1",
   port: PORT,
   idleTimeout: 255, // Cho phép tác vụ AI chạy ngầm (Muse video/code) lên tới hơn 4 phút không bị timeout
   async fetch(req, server) {
     const url = new URL(req.url);
-    console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
+    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // 1. CORS Preflight
     const preflight = handleCorsPreflight(req);
