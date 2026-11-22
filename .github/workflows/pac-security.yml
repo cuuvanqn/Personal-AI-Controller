@@ -1,0 +1,39 @@
+name: PAC security baseline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pac-security-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-tests:
+    name: Security unit tests (Bun)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NODE_ENV: test
+      OTTER_STRICT_WORKSPACE: "true"
+      OTTER_FULL_ACCESS: "false"
+      OTTER_TELEMETRY: "off"
+      NO_TUNNEL: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.3"
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Run security unit tests
+        run: bun test tests/security.test.ts tests/oauth-security.test.ts
