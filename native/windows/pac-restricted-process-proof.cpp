@@ -259,12 +259,36 @@ int wmain(int argc, wchar_t** argv) {
   std::wstring args = L"\"" + staged + L"\" --restricted-child \"" + sentinel + L"\"";
   std::vector<wchar_t> commandLine(args.begin(), args.end());
   commandLine.push_back(L'\0');
+  // CI-only experiment: explicitly specify the process/thread object's
+  // security descriptors. Default descriptors based on a restricted token
+  // can cause Access Denied when CreateProcessAsUser returns handles.
+  // RC is *not* an acceptable generic production DACL: this lab executable
+  // must never be integrated into PAC as a production broker.
+  std::wstring childAcl = L"D:P(A;;GA;;;" + userSid + L")(A;;GA;;;RC)";
+  PSECURITY_DESCRIPTOR childSd = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        childAcl.c_str(), SDDL_REVISION_1, &childSd, nullptr))
+    return fail("Child process descriptor");
+  SECURITY_ATTRIBUTES childAttrs = {};
+  childAttrs.nLength = sizeof(childAttrs);
+  childAttrs.lpSecurityDescriptor = childSd;
+  childAttrs.bInheritHandle = FALSE;
+
+  DWORD tokenTypeSize = 0;
+  TOKEN_TYPE tokenType = TokenImpersonation;
+  if (!GetTokenInformation(restricted.h, TokenType, &tokenType, sizeof(tokenType), &tokenTypeSize)
+      || tokenType != TokenPrimary) {
+    LocalFree(childSd);
+    return fail("Restricted token must be primary");
+  }
+  std::cout << "PAC_TOKEN_DIAGNOSTIC: primary=true restricted=true"
+            << " explicit_child_descriptor=true\n";
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
   // Two documented Windows APIs, but only the *same verified restricted
   // primary token*. Do NOT fall back to CreateProcessW / owner's identity.
   BOOL started = CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
-                                     nullptr, nullptr, FALSE,
+                                     &childAttrs, &childAttrs, FALSE,
                                      CREATE_SUSPENDED | CREATE_NO_WINDOW,
                                      nullptr, systemDirectory, &start, &proc);
   if (!started) {
@@ -278,6 +302,7 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     std::cout << "PAC_DIAGNOSTIC_PRIMARY_API: CreateProcessAsUserW\n";
   }
+  LocalFree(childSd);
   SafeHandle childProcess;
   SafeHandle childThread;
   childProcess.h = proc.hProcess;
