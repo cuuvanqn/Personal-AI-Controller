@@ -73,4 +73,15 @@ describe("PAC security automation guardrails", () => {
       .some(f => f.includes("Direct CUA CLI"))).toBe(true);
   });
 
+  test("rejects removal of a native desktop deny guard", () => {
+    const src = good["src/daemon/desktop.ts"];
+    const modified = src.replace(
+      "export async function executeCuaTool(toolName: string, args: Record<string, any> = {}): Promise<any> {\n  denyLegacyDesktopAccess();",
+      "export async function executeCuaTool(toolName: string, args: Record<string, any> = {}): Promise<any> {"
+    );
+    expect(modified).not.toBe(src);
+    const errors = checkPacPolicy({ ...good, "src/daemon/desktop.ts": modified });
+    expect(errors).toContain("Legacy desktop function missing deny guard: executeCuaTool");
+  });
+
 });
