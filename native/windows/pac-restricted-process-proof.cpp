@@ -319,6 +319,28 @@ int wmain(int argc, wchar_t** argv) {
             << (callerTokenOpen ? "allowed" : "denied")
             << " code=" << callerErr << "\n";
   // Do not loosen native security policy or silently run as original owner.
+  // Image-launch preflight: reading an EXE is not the same as opening it
+  // with execute rights and mapping a PE image section. This isolates a
+  // potential executable-image policy failure (no code is executed here).
+  if (!ImpersonateLoggedOnUser(restricted.h))
+    return fail("Image preflight impersonation");
+  HANDLE executable = CreateFileW(staged.c_str(), GENERIC_READ | GENERIC_EXECUTE,
+                                  FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  const DWORD executableErr = executable == INVALID_HANDLE_VALUE
+                             ? GetLastError() : ERROR_SUCCESS;
+  HANDLE imageSection = nullptr;
+  DWORD sectionErr = ERROR_SUCCESS;
+  if (executable != INVALID_HANDLE_VALUE) {
+    imageSection = CreateFileMappingW(executable, nullptr, PAGE_READONLY | SEC_IMAGE,
+                                      0, 0, nullptr);
+    if (!imageSection) sectionErr = GetLastError();
+    if (imageSection) CloseHandle(imageSection);
+    CloseHandle(executable);
+  }
+  if (!RevertToSelf()) return fail("Image preflight revert");
+  std::cout << "PAC_IMAGE_PREFLIGHT: read_execute_code=" << executableErr
+            << " sec_image_code=" << sectionErr << "\n";
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
   // Two documented Windows APIs, but only the *same verified restricted
