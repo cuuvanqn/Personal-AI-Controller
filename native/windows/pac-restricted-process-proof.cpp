@@ -31,6 +31,38 @@ static bool readAsCurrent(const wchar_t* file) {
   return h.h != INVALID_HANDLE_VALUE;
 }
 
+
+// Diagnostic preflight: tests actual restricted-token access before spawn.
+// Each reported item is a category only; never disclose machine paths.
+static bool probeAsRestricted(HANDLE token, const wchar_t* target, DWORD access,
+                               DWORD flags, const char* label) {
+  if (!ImpersonateLoggedOnUser(token)) {
+    std::cerr << "PAC_PREFLIGHT_FAILED: impersonation winerr=" << GetLastError() << "\n";
+    return false;
+  }
+  HANDLE h = CreateFileW(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, flags, nullptr);
+  const DWORD err = h == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+  if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+  const BOOL reverted = RevertToSelf();
+  if (!reverted) {
+    std::cerr << "PAC_PREFLIGHT_FAILED: revert winerr=" << GetLastError() << "\n";
+    return false;
+  }
+  std::cout << "PAC_PREFLIGHT_" << label << ": "
+            << (err == ERROR_SUCCESS ? "allowed" : "denied")
+            << " code=" << err << "\n";
+  return err == ERROR_SUCCESS;
+}
+
+static std::wstring parentOf(const std::wstring& value) {
+  const auto pos = value.find_last_of(L"\\/");
+  if (pos == std::wstring::npos) return L"";
+  if (pos == 2 && value.size() > 2 && value[1] == L':') return value.substr(0, 3);
+  if (pos == 0) return value.substr(0, 1);
+  return value.substr(0, pos);
+}
+
 int wmain(int argc, wchar_t** argv) {
   if (argc == 3 && wcscmp(argv[1], L"--restricted-child") == 0) {
     SafeHandle currentToken;
@@ -128,6 +160,29 @@ int wmain(int argc, wchar_t** argv) {
   LocalFree(exeSec);
   if (!aclOk) return fail("SetFileSecurity staged exe");
 
+  // Diagnose whether the restricted identity can traverse parent folders
+  // and read the fixed EXE. Granting EXE read alone is insufficient.
+  const bool exeAccess = probeAsRestricted(restricted.h, staged.c_str(), GENERIC_READ,
+                                           FILE_ATTRIBUTE_NORMAL, "STAGED_EXE");
+  std::wstring ancestor = parentOf(staged);
+  for (int depth = 0; depth < 12 && !ancestor.empty(); ++depth) {
+    const std::string label = "PARENT_DEPTH_" + std::to_string(depth);
+    probeAsRestricted(restricted.h, ancestor.c_str(), FILE_TRAVERSE,
+                      FILE_FLAG_BACKUP_SEMANTICS, label.c_str());
+    const std::wstring next = parentOf(ancestor);
+    if (next == ancestor) break;
+    ancestor = next;
+  }
+  wchar_t systemDirectory[MAX_PATH] = {};
+  if (!GetSystemDirectoryW(systemDirectory, MAX_PATH)) return fail("GetSystemDirectory");
+  const bool workingAccess = probeAsRestricted(restricted.h, systemDirectory,
+                                               FILE_TRAVERSE, FILE_FLAG_BACKUP_SEMANTICS,
+                                               "SYSTEM_DIRECTORY");
+  if (!exeAccess || !workingAccess) {
+    SetLastError(ERROR_ACCESS_DENIED);
+    return fail("Restricted preflight access to exe or system workdir");
+  }
+
   SafeHandle job;
   job.h = CreateJobObjectW(nullptr, nullptr);
   if (!job.h) return fail("CreateJobObject");
@@ -153,7 +208,7 @@ int wmain(int argc, wchar_t** argv) {
   if (!CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
                             nullptr, nullptr, FALSE,
                             CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                            nullptr, nullptr, &start, &proc))
+                            nullptr, systemDirectory, &start, &proc))
     return fail("CreateProcessAsUser restricted token");
   SafeHandle childProcess;
   SafeHandle childThread;
