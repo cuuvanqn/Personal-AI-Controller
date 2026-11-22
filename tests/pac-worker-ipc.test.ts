@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { callLabWorker, isLabWorkerEnabled } from "../src/worker/pac-worker-launcher";
+import { isSafeWorkerRelativePath } from "../src/worker/pac-windows-worker";
 import { spawn } from "bun";
 
 describe("PAC separate-process worker IPC (lab only)", () => {
@@ -30,6 +31,36 @@ describe("PAC separate-process worker IPC (lab only)", () => {
     const output = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
     expect(JSON.parse(output.trim())).toEqual({ ok: false, error: "OS_SANDBOX_NOT_CONFIGURED" });
+  });
+
+  test("rejects Windows ADS, device names, UNC aliases and traversal independent of host", async () => {
+    for (const candidate of [
+      "note.txt:secret", "CON", "NUL.txt", "LPT1", "COM9.log",
+      "dir/aux.json", "folder/trailing. ", "folder/subdir.", "a//b",
+      "../secret", "C:/Windows/win.ini", "\\\\server\\share\\file.txt",
+      "\\\\?\\C:\\Windows\\win.ini"
+    ]) {
+      expect(isSafeWorkerRelativePath(candidate)).toBe(false);
+      const result = await callLabWorker(root, { operation: "read_text", relativePath: candidate });
+      expect(result.ok).toBe(false);
+    }
+    expect(isSafeWorkerRelativePath("note.txt")).toBe(true);
+    expect(isSafeWorkerRelativePath("folder/note.txt")).toBe(true);
+  });
+
+  test("refuses multi-linked files even when the link is inside workspace", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pac-worker-hardlink-"));
+    const privateFile = path.join(outside, "private.txt");
+    const linked = path.join(root, "hardlinked.txt");
+    try {
+      fs.writeFileSync(privateFile, "outside-content", "utf8");
+      fs.linkSync(privateFile, linked);
+      const result = await callLabWorker(root, { operation: "read_text", relativePath: "hardlinked.txt" });
+      expect(result).toEqual({ ok: false, error: "ACCESS_DENIED" });
+    } finally {
+      try { fs.unlinkSync(linked); } catch {}
+      try { fs.rmSync(outside, { recursive: true, force: true }); } catch {}
+    }
   });
 
   test("worker reads text through a separate child process", async () => {
