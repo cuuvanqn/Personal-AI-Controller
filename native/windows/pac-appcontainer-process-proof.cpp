@@ -4,6 +4,8 @@
 // Windows AppContainer profile is disposable and cleaned after the test.
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0A00
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <userenv.h>
 #include <sddl.h>
@@ -13,6 +15,7 @@
 
 #pragma comment(lib, "userenv.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 struct H {
     HANDLE h = nullptr;
@@ -64,7 +67,7 @@ static bool applyAcl(const std::wstring& p, const std::wstring& sddl) {
 }
 
 static int child(int argc, wchar_t** argv) {
-    if (argc != 4) return fail("child args");
+    if (argc != 5) return fail("child args");
     H token;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.h))
         return fail("child token");
@@ -80,9 +83,34 @@ static int child(int argc, wchar_t** argv) {
         SetLastError(!allowedRead ? grantedError : blockedError);
         return fail("child OS ACL access-test mismatch");
     }
+    // Real negative egress test: parent is LISTENING on loopback, while a
+    // zero-capability AppContainer must be denied at Windows network policy.
+    const int port = _wtoi(argv[4]);
+    if (port <= 0 || port > 65535) return fail("Invalid network test port");
+    WSADATA wsa = {};
+    if (WSAStartup(MAKEWORD(2,2), &wsa)) return fail("Child WSAStartup");
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int networkError = 0;
+    if (sock == INVALID_SOCKET) networkError = WSAGetLastError();
+    else {
+        sockaddr_in addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = htons(static_cast<u_short>(port));
+        const int connected = connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        networkError = connected == SOCKET_ERROR ? WSAGetLastError() : ERROR_SUCCESS;
+        closesocket(sock);
+    }
+    WSACleanup();
+    if (networkError != WSAEACCES) {
+        std::cerr << "PAC_APPCONTAINER_NETWORK_FAILED: loopback_code="
+                  << networkError << " (expected WSAEACCES)\n";
+        return 1;
+    }
     std::cout << "PAC_APPCONTAINER_CHILD_PASSED: appcontainer=true"
               << " granted_read=true"
-              << " owner_only_read=ERROR_ACCESS_DENIED\n";
+              << " owner_only_read=ERROR_ACCESS_DENIED"
+              << " loopback=WSAEACCES\n";
     return 0;
 }
 
@@ -185,12 +213,41 @@ int wmain(int argc, wchar_t** argv) {
         return fail("Update AppContainer security capabilities");
     }
 
+    // Loopback-only listener with a real listening socket. A mere failed
+    // connect to an unopened port would not prove network policy denial.
+    struct WinsockScope {
+        SOCKET listener = INVALID_SOCKET;
+        bool initialized = false;
+        ~WinsockScope() {
+            if (listener != INVALID_SOCKET) closesocket(listener);
+            if (initialized) WSACleanup();
+        }
+    } network;
+    WSADATA networkInfo = {};
+    if (WSAStartup(MAKEWORD(2,2), &networkInfo)) return fail("Host WSAStartup");
+    network.initialized = true;
+    network.listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (network.listener == INVALID_SOCKET) return fail("Loopback listener socket");
+    sockaddr_in bound = {};
+    bound.sin_family = AF_INET;
+    bound.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    bound.sin_port = 0;
+    if (bind(network.listener, reinterpret_cast<sockaddr*>(&bound), sizeof(bound)) == SOCKET_ERROR ||
+        listen(network.listener, 1) == SOCKET_ERROR)
+        return fail("Bind/listen local loopback");
+    int addrSize = sizeof(bound);
+    if (getsockname(network.listener, reinterpret_cast<sockaddr*>(&bound), &addrSize) == SOCKET_ERROR)
+        return fail("Read loopback listener port");
+    const int port = ntohs(bound.sin_port);
+    if (port <= 0) return fail("Loopback listener has no port");
+
     STARTUPINFOEXW si = {};
     si.StartupInfo.cb = sizeof(si);
     si.lpAttributeList = list;
     PROCESS_INFORMATION pi = {};
     std::wstring cmd = L"\"" + cleanup.executable + L"\" --child \"" +
-                       cleanup.granted + L"\" \"" + cleanup.blocked + L"\"";
+                       cleanup.granted + L"\" \"" + cleanup.blocked + L"\" " +
+                       std::to_wstring(port);
     std::vector<wchar_t> mutableCommand(cmd.begin(), cmd.end());
     mutableCommand.push_back(L'\0');
 
@@ -249,6 +306,6 @@ int wmain(int argc, wchar_t** argv) {
     }
     std::cout << "PAC_APPCONTAINER_PROOF_PASSED: restricted_process=true"
               << " allowed_fixture=true owner_only_denied=true"
-              << " capabilities=0 job_object=true\n";
+              << " capabilities=0 job_object=true network_loopback_denied=true\n";
     return 0;
 }
