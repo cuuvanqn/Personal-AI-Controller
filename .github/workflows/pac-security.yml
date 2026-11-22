@@ -81,7 +81,7 @@ jobs:
         run: |
           $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
           if (!(Test-Path $compiler)) { throw 'Windows .NET Framework C# compiler unavailable' }
-          & $compiler /nologo /target:winexe /platform:x64 /out:labs/pac-worker-v0/PAC-Alpha-Lab.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll labs/pac-worker-v0/PAC-Alpha-Lab-GUI.cs
+          & $compiler /nologo /target:winexe /platform:x64 '/out:labs\pac-worker-v0\PAC-Alpha-Lab.exe' /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll 'labs\pac-worker-v0\PAC-Alpha-Lab-GUI.cs'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test compiled GUI launcher with real worker (no UI needed)
