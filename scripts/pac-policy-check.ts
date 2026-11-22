@@ -106,11 +106,6 @@ export function checkPacPolicy(sources: SourceSet): string[] {
     }
   }
 
-  if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {");
-    const fn = new RegExp("export async function " + escaped + "\\\\s*\\\\([^)]*\\\\)(?::[^\\\\{]*)?\\\\{\\\\s*denyLegacyDesktopAccess\\\\(\\\\);");
-    if (!fn.test(desktop)) errors.push("Legacy desktop function missing deny guard: " + name);
-  }
-
   if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {
     errors.push("Vendor telemetry must not send network requests");
   }
