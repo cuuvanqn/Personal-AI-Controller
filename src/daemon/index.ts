@@ -41,7 +41,7 @@ import {
   matchDaemonRoutePrefix
 } from "./routes";
 import { startScheduledTaskRunner } from "./scheduled-tasks";
-import { startTelemetryHeartbeat } from "./telemetry";
+// PAC: no vendor telemetry at startup.
 
 const cliArg = process.argv[2];
 
@@ -393,12 +393,16 @@ onExternalServersReloaded(() => {
   });
 });
 
+// PAC defaults to loopback even when the machine has a LAN interface.
+// Explicit remote access requires a separately reviewed architecture.
+ensureAuthToken();
 const server = Bun.serve<WsClientData>({
+  hostname: "127.0.0.1",
   port: PORT,
   idleTimeout: 255, // Cho phép tác vụ AI chạy ngầm (Muse video/code) lên tới hơn 4 phút không bị timeout
   async fetch(req, server) {
     const url = new URL(req.url);
-    console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
+    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // 1. CORS Preflight
     const preflight = handleCorsPreflight(req);
@@ -727,7 +731,7 @@ const server = Bun.serve<WsClientData>({
 console.log(`[+] 🔓 Giấy phép: Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng`);
 
 // Gửi nhịp hoạt động ẩn danh (hoặc gắn tài khoản Firebase nếu đã đăng nhập) mỗi 3 phút
-startTelemetryHeartbeat();
+// PAC: telemetry is disabled; no heartbeat is scheduled.
 
 console.log(`=======================================================`);
 console.log(`[+] 🦦 Otter Daemon running at http://127.0.0.1:${PORT}`);
@@ -802,7 +806,7 @@ import { startQuickTunnel } from "./tunnel";
 // Local spellings --tunnel / ENABLE_TUNNEL=true still accepted as explicit opt-in.
 const tunnelExplicitlyOn = process.argv.includes("--tunnel") || process.env.ENABLE_TUNNEL === "true";
 const tunnelDisabled = process.argv.includes("--no-tunnel") || process.env.NO_TUNNEL === "true";
-const shouldStartTunnel = tunnelExplicitlyOn || !tunnelDisabled;
+const shouldStartTunnel = tunnelExplicitlyOn && !tunnelDisabled;
 if (shouldStartTunnel) {
   // Đảm bảo ~/.otter/auth.token luôn tồn tại để bảo vệ các API nhạy cảm khi mở Tunnel công khai
   ensureAuthToken();
@@ -818,7 +822,7 @@ if (shouldStartTunnel) {
 // phiên bản mới (bản bắt buộc tự áp dụng; OTTER_AUTO_UPDATE=1 để tự áp dụng mọi bản).
 registerBeforeRestartHook(() => server.stop(true));
 cleanupAfterUpdate();
-startUpdateScheduler(handleMcpActivity);
+// PAC: no vendor update polling; updates require a reviewed release.
 
 // Nạp sẵn Otter Page-Agent Core vào các tab Chrome CDP nếu cổng CDP đang mở (không cần Extension)
 void cdpBridge.isAvailable().then((ok) => {

@@ -1,41 +1,24 @@
 import { jsonResponse, errorResponse } from "./common";
 import { matchDaemonRoute } from "./lcg-routes";
-import { getUpdateStatus, checkForUpdate, applyUpdate } from "../updater";
 
 /**
- * API tự cập nhật daemon (Dashboard):
- * - GET  /api/update/status -> trạng thái cập nhật hiện tại
- * - POST /api/update/check  -> kiểm tra phiên bản mới ngay
- * - POST /api/update/apply  -> tải + tráo binary + khởi động lại (chỉ bản exe)
- * Các route KHÔNG nằm trong isPublicPath (cần xác thực như các API quản trị khác).
+ * PAC does not accept remote-vendor update checks or binary replacement.
+ * Installing a reviewed, signed release will use a separate explicit workflow.
  */
 export async function handleUpdateRoutes(req: Request, url: URL): Promise<Response | null> {
   if (matchDaemonRoute(url.pathname, "UPDATE_STATUS") && req.method === "GET") {
-    return jsonResponse(getUpdateStatus());
+    return jsonResponse({
+      enabled: false,
+      updateAvailable: false,
+      autoUpdateEnabled: false,
+      reason: "PAC vendor updater disabled: use a reviewed release"
+    });
   }
-
   if (matchDaemonRoute(url.pathname, "UPDATE_CHECK") && req.method === "POST") {
-    const status = await checkForUpdate();
-    return jsonResponse(status);
+    return errorResponse("Vendor update checks are disabled in PAC", 403);
   }
-
   if (matchDaemonRoute(url.pathname, "UPDATE_APPLY") && req.method === "POST") {
-    const status = getUpdateStatus();
-    if (!status.isCompiledBinary) {
-      return errorResponse(
-        "Tự cập nhật chỉ áp dụng cho bản exe đã biên dịch. Bản dev hãy dùng git pull / bun run build:exe.",
-        400
-      );
-    }
-    // Trả phản hồi trước, áp dụng sau 300ms để client nhận được JSON
-    // trước khi tiến trình khởi động lại.
-    setTimeout(() => {
-      applyUpdate().catch((err) => {
-        console.warn(`[Updater] Áp dụng cập nhật thất bại: ${err.message}`);
-      });
-    }, 300);
-    return jsonResponse({ ok: true, message: "Đang tải và áp dụng bản cập nhật, daemon sẽ khởi động lại..." });
+    return errorResponse("Remote binary replacement is disabled in PAC", 403);
   }
-
   return null;
 }
