@@ -55,6 +55,34 @@ static bool probeAsRestricted(HANDLE token, const wchar_t* target, DWORD access,
   return err == ERROR_SUCCESS;
 }
 
+
+static void probeDesktopAsRestricted(HANDLE restricted) {
+  wchar_t stationName[256] = {}, desktopName[256] = {};
+  DWORD bytes = 0;
+  const bool hasStation = !!GetUserObjectInformationW(GetProcessWindowStation(),
+    UOI_NAME, stationName, sizeof(stationName), &bytes);
+  const bool hasDesktop = !!GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),
+    UOI_NAME, desktopName, sizeof(desktopName), &bytes);
+  if (!hasStation || !hasDesktop) {
+    std::cout << "PAC_DESKTOP_PREFLIGHT: unavailable\n";
+    return;
+  }
+  if (!ImpersonateLoggedOnUser(restricted)) {
+    std::cout << "PAC_DESKTOP_PREFLIGHT: impersonation failed\n";
+    return;
+  }
+  HWINSTA station = OpenWindowStationW(stationName, FALSE, WINSTA_ALL_ACCESS);
+  const DWORD stationError = station ? 0 : GetLastError();
+  if (station) CloseWindowStation(station);
+  HDESK desk = OpenDesktopW(desktopName, 0, FALSE, DESKTOP_ALL_ACCESS);
+  const DWORD desktopError = desk ? 0 : GetLastError();
+  if (desk) CloseDesktop(desk);
+  RevertToSelf();
+  std::cout << "PAC_DESKTOP_PREFLIGHT:"
+            << " station_full_access_code=" << stationError
+            << " desktop_full_access_code=" << desktopError << "\n";
+}
+
 static std::wstring parentOf(const std::wstring& value) {
   const auto pos = value.find_last_of(L"\\/");
   if (pos == std::wstring::npos) return L"";
@@ -205,6 +233,7 @@ int wmain(int argc, wchar_t** argv) {
   const bool workingAccess = probeAsRestricted(restricted.h, systemDirectory,
                                                FILE_TRAVERSE, FILE_FLAG_BACKUP_SEMANTICS,
                                                "SYSTEM_DIRECTORY");
+  probeDesktopAsRestricted(restricted.h);
   if (!exeAccess || !workingAccess) {
     SetLastError(ERROR_ACCESS_DENIED);
     return fail("Restricted preflight access to exe or system workdir");
