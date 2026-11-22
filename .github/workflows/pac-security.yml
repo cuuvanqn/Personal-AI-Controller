@@ -75,6 +75,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 
+
+      - name: Build fixed Native AppContainer Broker for GUI (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (!(Test-Path $vswhere)) { throw 'MSVC required for Native Broker' }
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (!$vs) { throw 'Visual Studio tools missing' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw 'MSVC environment missing' }
+          $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-appcontainer-worker-ipc-proof.cpp /Fe:labs\\pac-worker-v0\\PAC-AppContainer-Broker.exe /link advapi32.lib userenv.lib ole32.lib'
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Compile native Windows Forms Alpha interface
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -100,23 +115,26 @@ jobs:
           $dir = 'labs/pac-worker-v0'
           $worker = (Get-FileHash (Join-Path $dir 'pac-worker-lab.exe') -Algorithm SHA256).Hash
           $gui = (Get-FileHash (Join-Path $dir 'PAC-Alpha-Lab.exe') -Algorithm SHA256).Hash
+          $broker = (Get-FileHash (Join-Path $dir 'PAC-AppContainer-Broker.exe') -Algorithm SHA256).Hash
           @(
-            'PAC Alpha Lab v0.2 — unsigned, lab-only'
+            'PAC Alpha Lab v0.3 — native AppContainer, unsigned, lab-only'
             ('Commit: ' + $env:GITHUB_SHA)
             ('SHA256 pac-worker-lab.exe: ' + $worker)
             ('SHA256 PAC-Alpha-Lab.exe: ' + $gui)
-            'No OS sandbox, no personal file access'
+            ('SHA256 PAC-AppContainer-Broker.exe: ' + $broker)
+            'Native AppContainer worker only, fixtures only; no real data access'
           ) | Set-Content -Path (Join-Path $dir 'BUILD-MANIFEST.txt') -Encoding utf8
 
       - name: Upload unsigned Windows Alpha Lab preview (3 days)
         if: matrix.os == 'windows-latest' && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: pac-alpha-lab-v02-windows
+          name: pac-alpha-appcontainer-v03-windows
           path: |
             labs/pac-worker-v0/pac-worker-lab.exe
             labs/pac-worker-v0/PAC-Alpha-Lab.exe
-            labs/pac-worker-v0/ALPHA-V02-README.md
+            labs/pac-worker-v0/PAC-AppContainer-Broker.exe
+            labs/pac-worker-v0/ALPHA-V03-README.md
             labs/pac-worker-v0/BUILD-MANIFEST.txt
             labs/pac-worker-v0/run-demo.ps1
             labs/pac-worker-v0/README.md
