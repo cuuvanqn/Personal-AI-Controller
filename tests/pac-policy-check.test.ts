@@ -51,4 +51,26 @@ describe("PAC security automation guardrails", () => {
     const { ["src/daemon/telemetry.ts"]: _removed, ...partial } = good;
     expect(checkPacPolicy(partial)).toContain("Missing file: src/daemon/telemetry.ts");
   });
+  test("rejects re-introduction of HTTP Full Access", () => {
+    const source = good["src/daemon/routes/system-routes.ts"];
+    const modified = source.replace(
+      "PAC forbids granting Full Access over HTTP",
+      "full access enabled"
+    );
+    expect(modified).not.toBe(source);
+    expect(checkPacPolicy({ ...good, "src/daemon/routes/system-routes.ts": modified })
+      .some(f => f.includes("HTTP permission escalation"))).toBe(true);
+  });
+
+  test("rejects reintroduction of direct CUA command bridge", () => {
+    const source = good["src/daemon/index.ts"];
+    const modified = source.replace(
+      "Direct CUA commands are disabled pending sandboxed worker approval",
+      "Direct CUA commands enabled"
+    );
+    expect(modified).not.toBe(source);
+    expect(checkPacPolicy({ ...good, "src/daemon/index.ts": modified })
+      .some(f => f.includes("Direct CUA CLI"))).toBe(true);
+  });
+
 });
