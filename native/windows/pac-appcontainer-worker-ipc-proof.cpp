@@ -57,7 +57,7 @@ struct Profile {
     }
 };
 
-static std::vector<wchar_t> environment(const std::wstring& profile) {
+static std::vector<wchar_t> environment(const std::wstring& profile, bool diagnostics) {
     std::vector<wchar_t> result;
     auto add = [&](const std::wstring& var) {
         result.insert(result.end(), var.begin(), var.end());
@@ -74,6 +74,7 @@ static std::vector<wchar_t> environment(const std::wstring& profile) {
     add(L"LOCALAPPDATA=" + profile);
     add(L"NODE_ENV=test");
     add(L"PAC_WORKER_LAB_MODE=1");
+    if (diagnostics) add(L"PAC_WORKER_DIAGNOSTICS=1");
     result.push_back(L'\0');
     return result;
 }
@@ -128,7 +129,7 @@ static bool workerCall(const Profile& p, const std::string& request, bool expect
     std::wstring arguments = L"\"" + p.exe + L"\" \"" + root + L"\"";
     std::vector<wchar_t> command(arguments.begin(), arguments.end());
     command.push_back(L'\0');
-    std::vector<wchar_t> env = environment(root);
+    std::vector<wchar_t> env = environment(root, expectAllowed);
     if (env.empty()) {
         DeleteProcThreadAttributeList(attributes);
         return !failure("Worker env");
@@ -234,6 +235,12 @@ static bool workerCall(const Profile& p, const std::string& request, bool expect
                            output.find("ACCESS_DENIED") != std::string::npos;
     const bool hasFixture = output.find("PAC-AppContainer-Bun-Allowed") != std::string::npos;
     const bool correct = expectAllowed ? (hasSuccess && hasFixture) : hasDenied;
+    if (!correct && expectAllowed) {
+        // CI-only, no real files: report only the worker's short sanitized code.
+        const size_t pos = output.find("LAB_DIAG_");
+        if (pos != std::string::npos)
+            std::cerr << "PAC_BUN_ALLOWED_DIAG: " << output.substr(pos, 100) << "\n";
+    }
     if (!correct) {
         std::cerr << "PAC_BUN_IPC_DIAGNOSTIC: output_size=" << output.size()
                   << " contains_ok_true=" << hasSuccess
