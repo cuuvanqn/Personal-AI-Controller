@@ -265,6 +265,28 @@ int wmain(int argc, wchar_t** argv) {
         return fail("Read loopback listener port");
     const int port = ntohs(bound.sin_port);
     if (port <= 0) return fail("Loopback listener has no port");
+    // Positive control: prove the *same listener* accepts a TCP connection
+    // from the ordinary owner process, before trying the AppContainer child.
+    SOCKET positive = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (positive == INVALID_SOCKET) return fail("Owner positive socket");
+    sockaddr_in target = {};
+    target.sin_family = AF_INET;
+    target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    target.sin_port = htons(static_cast<u_short>(port));
+    const int connected = connect(positive, reinterpret_cast<sockaddr*>(&target),
+                                  sizeof(target));
+    if (connected == SOCKET_ERROR) {
+        closesocket(positive);
+        return fail("Owner cannot connect to live listener");
+    }
+    SOCKET accepted = accept(network.listener, nullptr, nullptr);
+    if (accepted == INVALID_SOCKET) {
+        closesocket(positive);
+        return fail("Owner positive connection not accepted");
+    }
+    closesocket(accepted);
+    closesocket(positive);
+    std::cout << "PAC_NETWORK_POSITIVE_CONTROL_PASSED: owner_tcp_loopback=true\n";
 
     STARTUPINFOEXW si = {};
     si.StartupInfo.cb = sizeof(si);
