@@ -63,33 +63,19 @@ jobs:
       - name: Bundle worker entry and launcher (compile only)
         run: bun build ./src/worker/pac-windows-worker.ts ./src/worker/pac-worker-launcher.ts --target=bun --outdir pac-worker-smoke
 
-  pac-worker-lab-build:
-    # First usable binary smoke-test: independent of the still-blocked native sandbox job.
-    if: github.event_name == 'pull_request'
-    name: PAC read-only lab v0.1 (Windows disposable CI)
-    runs-on: windows-latest
-    timeout-minutes: 8
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout reviewed PR source
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.0"
-      - name: Install fixed dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-      - name: Compile offline read-only worker binary
+      - name: Compile Windows lab-only worker EXE
+        if: matrix.os == 'windows-latest'
         run: bun build --compile ./src/worker/pac-windows-worker.ts --outfile ./labs/pac-worker-v0/pac-worker-lab.exe
-      - name: Verify packaged EXE with disposable workspace
+
+      - name: Run compiled Windows lab positive and negative IPC tests
+        if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           & ./labs/pac-worker-v0/run-demo.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Upload lab-only artifact (short retention)
+
+      - name: Upload lab-only Windows EXE (1 day)
+        if: matrix.os == 'windows-latest' && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: pac-worker-lab-v0-windows
