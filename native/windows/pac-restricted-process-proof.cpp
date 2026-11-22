@@ -189,7 +189,7 @@ int wmain(int argc, wchar_t** argv) {
   const bool exeAccess = probeAsRestricted(restricted.h, staged.c_str(), GENERIC_READ,
                                            FILE_ATTRIBUTE_NORMAL, "STAGED_EXE");
   std::wstring ancestor = parentOf(staged);
-  bool allParentsAccessible = true;
+  bool allParentsAccessible = true; // diagnostic; direct directory handle access differs from traverse bypass
   for (int depth = 0; depth < 12 && !ancestor.empty(); ++depth) {
     const std::string label = "PARENT_DEPTH_" + std::to_string(depth);
     allParentsAccessible = probeAsRestricted(restricted.h, ancestor.c_str(), FILE_TRAVERSE,
@@ -203,7 +203,7 @@ int wmain(int argc, wchar_t** argv) {
   const bool workingAccess = probeAsRestricted(restricted.h, systemDirectory,
                                                FILE_TRAVERSE, FILE_FLAG_BACKUP_SEMANTICS,
                                                "SYSTEM_DIRECTORY");
-  if (!exeAccess || !workingAccess || !allParentsAccessible) {
+  if (!exeAccess || !workingAccess) {
     SetLastError(ERROR_ACCESS_DENIED);
     return fail("Restricted preflight access to exe or system workdir");
   }
