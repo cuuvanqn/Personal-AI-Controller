@@ -26,14 +26,34 @@ function within(root: string, file: string): boolean {
   const relative = path.relative(root, file);
   return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
 }
+/**
+ * Portable Windows-safe relative names. Reject NT device names, ADS,
+ * trailing-dot aliases and platform-specific absolute/drive syntax even
+ * when tests run on a non-Windows host.
+ *
+ * A parser guard is not a substitute for NTFS ACLs or handle-based checks.
+ */
+export function isSafeWorkerRelativePath(input: string): boolean {
+  if (!input || input.length > 2048 || input.includes("\0") ||
+      input.startsWith("/") || input.startsWith("\\") ||
+      /^[A-Za-z]:/.test(input) || input.includes(":")) return false;
+  for (const component of input.split(/[\\/]/)) {
+    if (!component || component === ".." || component === ".") {
+      if (component === ".") continue;
+      return false;
+    }
+    if (/[. ]$/.test(component) ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(component)) return false;
+  }
+  return true;
+}
+
 function validate(raw: unknown): Request {
   if (!raw || Array.isArray(raw) || typeof raw !== "object") invalid("INVALID_REQUEST");
   const value = raw as Record<string, unknown>;
   if (!["read_text", "inspect_file", "list_directory"].includes(String(value.operation))) invalid("OPERATION_DENIED");
-  if (typeof value.relativePath !== "string" || value.relativePath.length < 1 ||
-    value.relativePath.length > 2048 || value.relativePath.includes("\0") ||
-    path.isAbsolute(value.relativePath) || /^[A-Za-z]:/.test(value.relativePath) ||
-    value.relativePath.startsWith("\\\\")) invalid("INVALID_PATH");
+  if (typeof value.relativePath !== "string" || !isSafeWorkerRelativePath(value.relativePath) ||
+    path.isAbsolute(value.relativePath)) invalid("INVALID_PATH");
   const allowed = value.operation === "read_text"
     ? ["operation", "relativePath", "maxBytes"]
     : value.operation === "list_directory"
@@ -82,13 +102,16 @@ export async function runReadOnlyWorkerTask(root: string, raw: unknown): Promise
       }};
     }
     if (!stat.isFile()) invalid("NOT_FILE");
+    // Hard links can refer to the same NTFS data as a file outside the grant.
+    // A conservative worker must reject multiply-linked files.
+    if (stat.nlink > 1) invalid("ACCESS_DENIED");
     if (task.operation === "inspect_file") return { ok: true, result: { kind: "file", size: stat.size } };
     const limit = task.maxBytes ?? MAX_READ;
     if (stat.size > limit) invalid("TOO_LARGE");
     const handle = await fs.open(target, "r");
     try {
       const opened = await handle.stat();
-      if (!opened.isFile() || opened.size > limit) invalid("TOO_LARGE");
+      if (!opened.isFile() || opened.size > limit || opened.nlink > 1) invalid("TOO_LARGE");
       const data = Buffer.alloc(opened.size);
       const result = await handle.read(data, 0, data.length, 0);
       if (result.bytesRead !== data.length) invalid("SHORT_READ");
