@@ -201,7 +201,7 @@ export function ensureAuthToken(): string {
     }
     fs.writeFileSync(path.join(dir, "auth.token"), newToken, "utf-8");
     cachedAuthToken = newToken;
-    console.log(`[Security] 🔑 Đã tạo khóa bảo mật mới tại ~/.otter/auth.token: ${newToken}`);
+    console.log("[Security] Authentication token created in local credential file (value not logged).");
   } catch (err) {
     console.warn("[Security] Could not persist auth token to ~/.otter/auth.token", err);
     cachedAuthToken = newToken;
@@ -312,59 +312,16 @@ export function getTailscaleIp(): string | null {
 }
 
 /**
- * Kiểm tra xác thực (Authentication).
- * Quy tắc an toàn:
- * 1. Nếu request đến từ Internet (Cloudflare Tunnel hoặc remote host công khai), BẮT BUỘC phải có token.
- * 2. Nếu request đến từ Localhost, mạng Tailscale VPN hoặc Private LAN, được miễn trừ token khi OTTER_API_KEY chưa đặt.
- * 3. Nếu có OTTER_API_KEY được cấu hình (kể cả trên localhost/Tailscale), BẮT BUỘC phải có token.
- * 4. Hỗ trợ Authorization: Bearer <token> hoặc query param ?token=<token>.
+ * PAC initial hardening: deny unauthenticated requests on ALL networks.
+ * The host/IP is never accepted as proof of identity.
+ * URL query tokens are removed to prevent token leakage in access logs/history.
  */
-export function isRequestAuthorized(req: Request, url: URL, clientIp?: string): boolean {
-  const token = getAuthToken();
-
-  // Kiểm tra Header Authorization
-  const authHeader = req.headers.get("authorization");
-  if (authHeader && authHeader.trim().startsWith("Bearer ")) {
-    const provided = authHeader.trim().slice(7).trim();
-    if (token && provided === token) {
-      return true;
-    }
-    // Access token OAuth cấp riêng cho từng client (thu hồi được từng client).
-    if (validateOAuthAccessToken(provided)) {
-      return true;
-    }
-  }
-
-  // Kiểm tra Query Parameter
-  const tokenParam = url.searchParams.get("token");
-  if (tokenParam && token && tokenParam.trim() === token) {
-    return true;
-  }
-  if (tokenParam && validateOAuthAccessToken(tokenParam.trim())) {
-    return true;
-  }
-
-  // Kiểm tra host và client xuất xứ
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
-  const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  const effectiveClientIp = clientIp || forwardedFor || realIp || "";
-
-  // Nếu cả host VÀ client IP (nếu có) thuộc Tailscale / Localhost / Private LAN:
-  // Được coi là truy cập mạng tin cậy an toàn
-  const isHostTrusted = isTrustedHostOrIp(host);
-  const isClientTrusted = effectiveClientIp ? isTrustedHostOrIp(effectiveClientIp) : isHostTrusted;
-  const isTrustedNetwork = isHostTrusted && isClientTrusted;
-
-  if (!isTrustedNetwork) {
-    // Khi đi qua Cloudflare Tunnel hoặc truy cập ngoài mạng, BẮT BUỘC chặn nếu không có token
-    return false;
-  }
-
-  // Nếu ở mạng nội bộ (Local / Tailscale / Private LAN) và người dùng chưa đặt OTTER_API_KEY, cho phép truy cập
-  if (!process.env.OTTER_API_KEY) {
-    return true;
-  }
-
-  return false;
+export function isRequestAuthorized(req: Request, _url: URL, _clientIp?: string): boolean {
+  const authorization = req.headers.get("authorization")?.trim() || "";
+  if (!authorization.startsWith("Bearer ")) return false;
+  const provided = authorization.slice("Bearer ".length).trim();
+  if (!provided) return false;
+  const masterToken = getAuthToken();
+  if (masterToken && provided === masterToken) return true;
+  return validateOAuthAccessToken(provided);
 }

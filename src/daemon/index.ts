@@ -404,34 +404,17 @@ const server = Bun.serve<WsClientData>({
     const preflight = handleCorsPreflight(req);
     if (preflight) return preflight;
 
-    // 2. Kiểm tra xác thực (Local/LAN/Tailscale miễn trừ khi chưa đặt OTTER_API_KEY;
-    //    truy cập từ Internet qua Cloudflare Tunnel BẮT BUỘC phải có Bearer token!)
-    const isPublicPath = url.pathname === "/" ||
-      url.pathname === "/health" ||
-      url.pathname === "/api/health" ||
-      url.pathname === "/activity" ||
-      url.pathname === "/dashboard" ||
-      url.pathname.startsWith("/dashboard/assets/") ||
-      url.pathname === "/dashboard/favicon.svg" ||
-      url.pathname === "/dashboard/icons.svg" ||
-      url.pathname.startsWith("/storage/tasks/") ||
-      url.pathname === "/api/media/file" ||
-      url.pathname.startsWith("/storage/media/") ||
-      url.pathname === "/openapi.json" ||
-      matchDaemonRoute(url.pathname, "MCP_SERVERS") ||
-      matchDaemonRoute(url.pathname, "SYS_LICENSE") ||
-      matchDaemonRoute(url.pathname, "SYS_LICENSE_ACTIVATE") ||
-      matchDaemonRoute(url.pathname, "SYS_TUNNEL") ||
-      url.pathname.startsWith("/assets/") ||
-      url.pathname === "/.well-known/ai-plugin.json" ||
-      url.pathname === "/.well-known/agent-card.json" ||
-      url.pathname === "/.well-known/oauth-protected-resource" ||
-      url.pathname === "/.well-known/oauth-authorization-server" ||
-      url.pathname === "/.well-known/openid-configuration" ||
-      url.pathname === "/oauth/authorize" ||
-      url.pathname === "/oauth/token" ||
-      url.pathname === "/oauth/register";
-
+    // PAC hardening: only minimal health and OAuth discovery/token flow routes
+    // bypass the shared Bearer authentication gate. All file/media/dashboard,
+    // management and tool endpoints require an authenticated request.
+    const publicPaths = new Set([
+      "/health", "/api/health",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/openid-configuration",
+      "/oauth/authorize", "/oauth/token", "/oauth/register"
+    ]);
+    const isPublicPath = publicPaths.has(url.pathname);
     if (!isPublicPath) {
       const clientIp = server.requestIP(req)?.address;
       const authErr = checkAuth(req, url, clientIp);

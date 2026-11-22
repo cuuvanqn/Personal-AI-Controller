@@ -2,7 +2,7 @@ name: PAC baseline checks
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, pac/ci-security-baseline]
   push:
     branches: [main]
   workflow_dispatch:
