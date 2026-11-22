@@ -153,7 +153,10 @@ if (import.meta.main) {
   // Explicit absolute root is provided by the trusted launcher, not the model.
   const root = process.argv[2];
   let response: WorkerReply;
-  if (process.env.PAC_WORKER_LAB_MODE !== "1" || process.env.NODE_ENV !== "test") {
+  // Bun --compile substitutes direct process.env.NODE_ENV at build time.
+  // Read through a runtime map so lab approval is checked when executed.
+  const runtimeEnv: Record<string, string | undefined> = process.env;
+  if (runtimeEnv["PAC_WORKER_LAB_MODE"] !== "1" || runtimeEnv["NODE_ENV"] !== "test") {
     response = { ok: false, error: "OS_SANDBOX_NOT_CONFIGURED" };
   }
   else if (!root || !path.isAbsolute(root)) response = { ok: false, error: "WORKSPACE_NOT_CONFIGURED" };
