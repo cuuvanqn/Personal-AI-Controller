@@ -74,6 +74,7 @@ static std::vector<wchar_t> environment(const std::wstring& profile, bool diagno
     add(L"LOCALAPPDATA=" + profile);
     add(L"NODE_ENV=test");
     add(L"PAC_WORKER_LAB_MODE=1");
+    add(L"PAC_APP_CONTAINER_FS_LAB=1");
     if (diagnostics) add(L"PAC_WORKER_DIAGNOSTICS=1");
     result.push_back(L'\0');
     return result;
