@@ -51,7 +51,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   appcontainer-child-proof:
-    name: Windows AppContainer child (OS permission denial)
+    name: Windows AppContainer + Bun worker IPC proof
     runs-on: windows-latest
     timeout-minutes: 8
     steps:
@@ -69,5 +69,26 @@ jobs:
           $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
           if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment unavailable' }
           $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-appcontainer-process-proof.cpp /Fe:pac-appcontainer-process-proof.exe /link advapi32.lib userenv.lib ole32.lib && pac-appcontainer-process-proof.exe --ci-lab'
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Set up pinned Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      - name: Compile actual read-only Bun worker as Windows EXE
+        run: bun build --compile ./src/worker/pac-windows-worker.ts --outfile ./labs/pac-worker-v0/pac-worker-lab.exe
+
+      - name: Prove compiled Bun worker in real AppContainer with IPC
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (!(Test-Path $vswhere)) { throw 'MSVC not available' }
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (!$vs) { throw 'Visual Studio unavailable' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment unavailable' }
+          $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-appcontainer-worker-ipc-proof.cpp /Fe:pac-appcontainer-worker-ipc-proof.exe /link advapi32.lib userenv.lib ole32.lib && pac-appcontainer-worker-ipc-proof.exe --ci-lab'
           cmd.exe /d /s /c $cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
