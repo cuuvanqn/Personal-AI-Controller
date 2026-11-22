@@ -84,22 +84,22 @@ describe("Security & Hardening Tests", () => {
     });
     expect(isRequestAuthorized(extReqValidHeader, new URL(extReqValidHeader.url))).toBe(true);
 
-    // 4. External request with correct query parameter token -> allowed
+    // 4. Query parameter token must be refused by PAC
     const extReqValidQuery = new Request("https://otter.example.com/api/activity/v1/stream?token=secret-token-abcdef123", {
       headers: { host: "otter.example.com" }
     });
-    expect(isRequestAuthorized(extReqValidQuery, new URL(extReqValidQuery.url))).toBe(true);
+    expect(isRequestAuthorized(extReqValidQuery, new URL(extReqValidQuery.url))).toBe(false);
 
     // Dọn dẹp token
     setAuthToken(null);
   });
 
-  it("allows localhost requests when no token configured, but protects when token is set", () => {
+  it("rejects localhost requests without a bearer token, even when not configured", () => {
     setAuthToken(null);
     const localReqNoToken = new Request("http://127.0.0.1:1993/api/bookmarks", {
       headers: { host: "127.0.0.1:1993" }
     });
-    expect(isRequestAuthorized(localReqNoToken, new URL(localReqNoToken.url))).toBe(true);
+    expect(isRequestAuthorized(localReqNoToken, new URL(localReqNoToken.url))).toBe(false);
 
     // Khi người dùng đặt token
     setAuthToken("my-super-secret-key");
@@ -113,6 +113,15 @@ describe("Security & Hardening Tests", () => {
     });
     expect(isRequestAuthorized(localReqWithToken, new URL(localReqWithToken.url))).toBe(true);
 
+    setAuthToken(null);
+  });
+
+  it("rejects API keys in query strings on public and local hosts", () => {
+    setAuthToken("test-pac-secret");
+    const localReq = new Request("http://127.0.0.1:1993/api/activity/v1/terminal/exec?token=test-pac-secret");
+    expect(isRequestAuthorized(localReq, new URL(localReq.url))).toBe(false);
+    const publicReq = new Request("https://public.example.org/mcp?token=test-pac-secret");
+    expect(isRequestAuthorized(publicReq, new URL(publicReq.url))).toBe(false);
     setAuthToken(null);
   });
 
@@ -190,14 +199,14 @@ describe("Security & Hardening Tests", () => {
     expect(isTrustedHostOrIp("ts.net.fake.com")).toBe(false);
   });
 
-  it("authorizes requests from Tailscale IP without token when no OTTER_API_KEY is configured", () => {
+  it("rejects tokenless Tailscale requests even on private networks", () => {
     setAuthToken(null);
     const tsReq = new Request("http://100.66.170.39:1993/api/bookmarks", {
       headers: { host: "100.66.170.39:1993" }
     });
     // Request from remote Tailscale client IP (both pure IPv4 and dual-stack IPv6-mapped IPv4)
-    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "100.111.68.103")).toBe(true);
-    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "::ffff:100.111.68.103")).toBe(true);
+    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "100.111.68.103")).toBe(false);
+    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "::ffff:100.111.68.103")).toBe(false);
 
     // When client IP is external public IP, should be rejected without token
     expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "203.0.113.1")).toBe(false);
