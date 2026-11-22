@@ -2,11 +2,35 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { callLabWorker } from "../src/worker/pac-worker-launcher";
+import { callLabWorker, isLabWorkerEnabled } from "../src/worker/pac-worker-launcher";
+import { spawn } from "bun";
 
 describe("PAC separate-process worker IPC (lab only)", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pac-worker-ipc-"));
   fs.writeFileSync(path.join(root, "note.txt"), "hello from child", "utf8");
+
+  test("worker lab capability requires both explicit opt-in and test environment", () => {
+    expect(isLabWorkerEnabled({ NODE_ENV: "production", PAC_WORKER_LAB_MODE: "1" })).toBe(false);
+    expect(isLabWorkerEnabled({ NODE_ENV: "test", PAC_WORKER_LAB_MODE: "0" })).toBe(false);
+    expect(isLabWorkerEnabled({ NODE_ENV: "test", PAC_WORKER_LAB_MODE: "1" })).toBe(true);
+  });
+
+  test("worker CLI denies access without lab opt-in, even when a valid root is supplied", async () => {
+    const entry = path.resolve(import.meta.dir, "../src/worker/pac-windows-worker.ts");
+    const proc = spawn({
+      cmd: [process.execPath, entry, root],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { PATH: process.env.PATH ?? "", SystemRoot: process.env.SystemRoot ?? "",
+        WINDIR: process.env.WINDIR ?? "", NODE_ENV: "production", PAC_WORKER_LAB_MODE: "0" }
+    });
+    proc.stdin.write(JSON.stringify({ operation: "read_text", relativePath: "note.txt" }));
+    proc.stdin.end();
+    const output = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(JSON.parse(output.trim())).toEqual({ ok: false, error: "OS_SANDBOX_NOT_CONFIGURED" });
+  });
 
   test("worker reads text through a separate child process", async () => {
     const res = await callLabWorker(root, { operation: "read_text", relativePath: "note.txt" });
