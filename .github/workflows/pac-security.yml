@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 10
     env:
       NODE_ENV: test
+      # Disposable hosted CI only; worker refuses to launch without explicit lab flag.
+      PAC_WORKER_LAB_MODE: "1"
       OTTER_STRICT_WORKSPACE: "true"
       OTTER_FULL_ACCESS: "false"
       OTTER_TELEMETRY: "off"
