@@ -73,7 +73,7 @@ int wmain(int argc, wchar_t** argv) {
 
   BYTE worldSidBuffer[SECURITY_MAX_SID_SIZE] = {};
   DWORD worldSize = sizeof(worldSidBuffer);
-  if (!CreateWellKnownSid(WinWorldSid, nullptr, worldSidBuffer, &worldSize))
+  if (!CreateWellKnownSid(WinBuiltinUsersSid, nullptr, worldSidBuffer, &worldSize))
     return fail("CreateWellKnownSid");
   SID_AND_ATTRIBUTES world = { worldSidBuffer, 0 };
   SafeHandle restricted;
@@ -90,7 +90,7 @@ int wmain(int argc, wchar_t** argv) {
   std::wstring sentinel(tmpName);
   if (!DeleteFileW(sentinel.c_str())) return fail("Delete temp placeholder");
 
-  // The owner can read; Everyone (the sole restricting SID) is not in DACL.
+  // The owner can read; BUILTIN\\Users (the sole restricting SID) is not in DACL.
   const std::wstring sentinelSddl = L"D:P(A;;GA;;;" + userSid + L")";
   PSECURITY_DESCRIPTOR sec = nullptr;
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -117,8 +117,9 @@ int wmain(int argc, wchar_t** argv) {
   if (!selfSize || selfSize >= MAX_PATH) return fail("GetModuleFileName");
   std::wstring staged = std::wstring(tmpName) + L".exe";
   // Stage a test-only copy with read/execute rights for the restricting SID.
+  // BUILTIN\\Users also matches standard Windows library and folder ACLs.
   if (!CopyFileW(self, staged.c_str(), TRUE)) return fail("Copy test executable");
-  const std::wstring exeSddl = L"D:P(A;;GA;;;" + userSid + L")(A;;GRGX;;;WD)";
+  const std::wstring exeSddl = L"D:P(A;;GA;;;" + userSid + L")(A;;GRGX;;;BU)";
   PSECURITY_DESCRIPTOR exeSec = nullptr;
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
          exeSddl.c_str(), SDDL_REVISION_1, &exeSec, nullptr))
