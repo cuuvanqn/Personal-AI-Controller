@@ -2,7 +2,7 @@ name: PAC baseline checks
 
 on:
   pull_request:
-    branches: [main, pac/ci-security-baseline, pac/security-deny-by-default, pac/disable-vendor-egress, pac/oauth-consent-gate]
+    branches: [main, pac/ci-security-baseline, pac/security-deny-by-default, pac/disable-vendor-egress, pac/oauth-consent-gate, pac/disable-legacy-shell]
   push:
     branches: [main]
   workflow_dispatch:
