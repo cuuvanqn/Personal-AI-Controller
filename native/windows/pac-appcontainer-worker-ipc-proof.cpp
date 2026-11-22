@@ -80,7 +80,9 @@ static std::vector<wchar_t> environment(const std::wstring& profile, bool diagno
     return result;
 }
 
-static bool workerCall(const Profile& p, const std::string& request, bool expectAllowed) {
+static bool workerCall(const Profile& p, const std::string& request, bool expectAllowed,
+                       const std::string& expectedMarker = "PAC-AppContainer-Bun-Allowed",
+                       std::string* response = nullptr, const std::string& expectedError = "ACCESS_DENIED") {
     H stdinRead, stdinWrite, stdoutRead, stdoutWrite;
     SECURITY_ATTRIBUTES inheritance = {};
     inheritance.nLength = sizeof(inheritance);
@@ -233,8 +235,8 @@ static bool workerCall(const Profile& p, const std::string& request, bool expect
     }
     const bool hasSuccess = output.find("\"ok\":true") != std::string::npos;
     const bool hasDenied = output.find("\"ok\":false") != std::string::npos &&
-                           output.find("ACCESS_DENIED") != std::string::npos;
-    const bool hasFixture = output.find("PAC-AppContainer-Bun-Allowed") != std::string::npos;
+                           output.find(expectedError) != std::string::npos;
+    const bool hasFixture = output.find(expectedMarker) != std::string::npos;
     const bool correct = expectAllowed ? (hasSuccess && hasFixture) : hasDenied;
     if (!correct && expectAllowed) {
         // CI-only, no real files: report only the worker's short sanitized code.
@@ -248,12 +250,18 @@ static bool workerCall(const Profile& p, const std::string& request, bool expect
                   << " contains_access_denied=" << hasDenied << "\n";
         return false;
     }
+    if (response) *response = output;
     return true;
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2 || wcscmp(argv[1], L"--ci-lab") != 0)
-        return failure("CI mode required");
+    if (argc != 2) return failure("Fixed lab operation required");
+    const std::wstring mode(argv[1]);
+    const bool ci = mode == L"--ci-lab";
+    const bool gui = mode == L"--gui-read" || mode == L"--gui-inspect" ||
+                     mode == L"--gui-list" || mode == L"--gui-deny-command" ||
+                     mode == L"--gui-deny-path" || mode == L"--gui-verify";
+    if (!ci && !gui) return failure("Lab operation denied");
     Profile p;
     p.name = L"PacBunProof_" + std::to_wstring(GetCurrentProcessId()) +
              L"_" + std::to_wstring(GetTickCount64());
@@ -293,13 +301,17 @@ int wmain(int argc, wchar_t** argv) {
     p.allowed = root + L"\\pac-granted.txt";
     p.denied = root + L"\\pac-owner-only.txt";
 
-    // This fixed CI path is not supplied by a model or user. A production
-    // broker must additionally verify immutable deployment/signature/hash.
-    wchar_t worker[MAX_PATH * 2] = {};
-    DWORD n = GetFullPathNameW(L"labs\\pac-worker-v0\\pac-worker-lab.exe",
-                               MAX_PATH * 2, worker, nullptr);
-    if (!n || n >= MAX_PATH * 2 || !CopyFileW(worker, p.exe.c_str(), TRUE))
-        return failure("Stage compiled Bun worker into AppContainer profile");
+    // Fixed sibling executable: the GUI supplies no executable or workspace path.
+    // An actual release needs signed, immutable binaries before handling user data.
+    wchar_t self[MAX_PATH * 2] = {};
+    DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
+    if (!n || n >= MAX_PATH * 2) return failure("Find fixed broker");
+    std::wstring brokerPath(self);
+    const auto split = brokerPath.find_last_of(L"\\/");
+    if (split == std::wstring::npos) return failure("Broker directory");
+    const std::wstring worker = brokerPath.substr(0, split + 1) + L"pac-worker-lab.exe";
+    if (!CopyFileW(worker.c_str(), p.exe.c_str(), TRUE))
+        return failure("Stage fixed sibling worker into AppContainer profile");
     if (!acl(p.exe, L"D:P(A;;GA;;;" + ownerSid + L")(A;;GRGX;;;" + packageSid + L")"))
         return failure("Bun executable ACL");
 
@@ -321,13 +333,48 @@ int wmain(int argc, wchar_t** argv) {
       "{\"operation\":\"read_text\",\"relativePath\":\"pac-granted.txt\"}";
     const std::string deniedRequest =
       "{\"operation\":\"read_text\",\"relativePath\":\"pac-owner-only.txt\"}";
-    if (!workerCall(p, allowedRequest, true))
-        return failure("AppContainer Bun granted read IPC");
-    if (!workerCall(p, deniedRequest, false))
-        return failure("AppContainer Bun owner-only denied read IPC");
-
-    std::cout << "PAC_BUN_APPCONTAINER_IPC_PASSED: real_bun_worker=true"
-              << " appcontainer_token=true permitted_read=true denied_read=true"
-              << " job_object=true capability_count=0\n";
+    const std::string inspectRequest =
+      "{\"operation\":\"inspect_file\",\"relativePath\":\"pac-granted.txt\"}";
+    const std::string listRequest =
+      "{\"operation\":\"list_directory\",\"relativePath\":\".\"}";
+    const std::string commandRequest =
+      "{\"operation\":\"execute_terminal_command\",\"command\":\"whoami\"}";
+    const std::string traversalRequest =
+      "{\"operation\":\"read_text\",\"relativePath\":\"../outside.txt\"}";
+    if (ci || mode == L"--gui-verify") {
+        if (!workerCall(p, allowedRequest, true))
+            return failure("AppContainer Bun granted read IPC");
+        if (!workerCall(p, deniedRequest, false))
+            return failure("AppContainer Bun owner-only denied read IPC");
+        if (ci) {
+            std::cout << "PAC_BUN_APPCONTAINER_IPC_PASSED: real_bun_worker=true"
+                      << " appcontainer_token=true permitted_read=true denied_read=true"
+                      << " job_object=true capability_count=0\n";
+        } else {
+            std::cout << "{\"ok\":true,\"result\":{\"appcontainer\":true,\"allowed\":true,"
+                         "\"denied\":true,\"job\":true}}\n";
+        }
+        return 0;
+    }
+    std::string request, marker, expectedError, response;
+    bool expectAllowed = true;
+    if (mode == L"--gui-read") {
+        request = allowedRequest;
+        marker = "PAC-AppContainer-Bun-Allowed";
+    } else if (mode == L"--gui-inspect") {
+        request = inspectRequest;
+        marker = "\"size\"";
+    } else if (mode == L"--gui-list") {
+        request = listRequest;
+        marker = "pac-granted.txt";
+    } else if (mode == L"--gui-deny-command") {
+        request = commandRequest; expectAllowed = false; expectedError = "OPERATION_DENIED";
+    } else if (mode == L"--gui-deny-path") {
+        request = traversalRequest; expectAllowed = false; expectedError = "INVALID_PATH";
+    } else return failure("GUI operation unsupported");
+    if (!workerCall(p, request, expectAllowed, marker, &response,
+                    expectAllowed ? "ACCESS_DENIED" : expectedError))
+        return failure("AppContainer GUI operation did not pass expected policy");
+    std::cout << response;
     return 0;
 }

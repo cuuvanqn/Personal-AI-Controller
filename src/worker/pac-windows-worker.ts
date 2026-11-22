@@ -77,7 +77,7 @@ async function resolveReadable(root: string, relative: string, phase?: { step: s
   const fixtureOnly = process.platform === "win32" &&
     env["PAC_APP_CONTAINER_FS_LAB"] === "1" &&
     env["PAC_WORKER_LAB_MODE"] === "1" && env["NODE_ENV"] === "test" &&
-    (relative === "pac-granted.txt" || relative === "pac-owner-only.txt");
+    (relative === "pac-granted.txt" || relative === "pac-owner-only.txt" || relative === ".");
   if (phase) phase.step = "ROOT_REALPATH";
   let rootReal: string;
   try { rootReal = await fs.realpath(root); }

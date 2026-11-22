@@ -1,5 +1,6 @@
 ﻿// PAC Alpha Lab v0.2 — WinForms UI for disposable fixture data ONLY.
-// Runs as the current Windows user; this is NOT an OS sandbox.
+// GUI is an ordinary process; the fixed native broker launches the read-only
+// Bun worker as a distinct AppContainer process. Lab fixtures only.
 // There are intentionally no user-supplied paths, command inputs, networking,
 // remote APIs, browser integration, or elevation requests.
 using System;
@@ -16,7 +17,7 @@ internal static class LabWorker
 {
     internal static string WorkerPath
     {
-        get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pac-worker-lab.exe"); }
+        get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PAC-AppContainer-Broker.exe"); }
     }
 
     internal static string NewFixture()
@@ -44,14 +45,29 @@ internal static class LabWorker
     internal static string Call(string workspace, string json, Action<Process> started)
     {
         if (!File.Exists(WorkerPath))
-            throw new FileNotFoundException("Khong tim thay pac-worker-lab.exe.", WorkerPath);
+            throw new FileNotFoundException("Khong tim thay PAC-AppContainer-Broker.exe.", WorkerPath);
         if (!Directory.Exists(workspace) || !Path.GetFileName(workspace).StartsWith("pac-alpha-sample-", StringComparison.Ordinal))
             throw new InvalidOperationException("Chi cho phep bo du lieu mau do PAC tao.");
+        // GUI never supplies an executable, root path or shell command.
+        // The native broker only accepts six internally fixed lab operations.
+        var payload = new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string, object>;
+        if (payload == null || !payload.ContainsKey("operation"))
+            throw new InvalidOperationException("Yeu cau khong hop le.");
+        string op = Convert.ToString(payload["operation"]);
+        string rel = payload.ContainsKey("relativePath") ? Convert.ToString(payload["relativePath"]) : "";
+        string mode;
+        if (op == "read_text" && rel == "chao-mung.txt") mode = "--gui-read";
+        else if (op == "inspect_file" && rel == "chao-mung.txt") mode = "--gui-inspect";
+        else if (op == "list_directory" && rel == ".") mode = "--gui-list";
+        else if (op == "execute_terminal_command") mode = "--gui-deny-command";
+        else if (op == "read_text" && rel == "../private.txt") mode = "--gui-deny-path";
+        else if (op == "pac_native_verify") mode = "--gui-verify";
+        else throw new InvalidOperationException("PAC chi cho phep tac vu mau co dinh.");
         var info = new ProcessStartInfo(WorkerPath);
-        info.Arguments = "\"" + workspace + "\"";
+        info.Arguments = mode;
         info.UseShellExecute = false;
         info.CreateNoWindow = true;
-        info.RedirectStandardInput = true;
+        info.RedirectStandardInput = false;
         info.RedirectStandardOutput = true;
         info.RedirectStandardError = false;
         // Minimize inherited environment, not an OS security boundary.
@@ -61,8 +77,7 @@ internal static class LabWorker
             string value = Environment.GetEnvironmentVariable(name);
             if (!String.IsNullOrEmpty(value)) info.EnvironmentVariables[name] = value;
         }
-        info.EnvironmentVariables["NODE_ENV"] = "test";
-        info.EnvironmentVariables["PAC_WORKER_LAB_MODE"] = "1";
+        // The broker constructs the AppContainer worker environment itself.
         using (var process = new Process())
         {
             process.StartInfo = info;
@@ -71,12 +86,10 @@ internal static class LabWorker
             try
             {
                 Task<string> output = process.StandardOutput.ReadToEndAsync();
-                process.StandardInput.Write(json);
-                process.StandardInput.Close();
-                if (!process.WaitForExit(3500))
+                if (!process.WaitForExit(15000))
                 {
                     process.Kill();
-                    throw new TimeoutException("Worker vuot 3.5 giay va da bi dung.");
+                    throw new TimeoutException("Native Broker vuot 15 giay va da bi dung.");
                 }
                 string wire = output.GetAwaiter().GetResult();
                 if (wire.Length > 32768 || process.ExitCode != 0)
@@ -107,10 +120,17 @@ internal static class LabWorker
         var read = Parse(Call(workspace, Request("read_text", "chao-mung.txt"), null));
         if (!(bool)read["ok"]) return false;
         var result = read["result"] as Dictionary<string, object>;
-        if (result == null || !Convert.ToString(result["text"]).Contains("PAC Alpha Lab v0.2")) return false;
+        if (result == null || !Convert.ToString(result["text"]).Contains("PAC-AppContainer-Bun-Allowed")) return false;
 
         var inspect = Parse(Call(workspace, Request("inspect_file", "chao-mung.txt"), null));
         var listed = Parse(Call(workspace, Request("list_directory", "."), null));
+        var nativeProof = Parse(Call(workspace,
+            "{\"operation\":\"pac_native_verify\"}", null));
+        if (!(bool)nativeProof["ok"]) return false;
+        var native = nativeProof["result"] as Dictionary<string, object>;
+        if (native == null || !(bool)native["appcontainer"] ||
+            !(bool)native["allowed"] || !(bool)native["denied"] ||
+            !(bool)native["job"]) return false;
         var denied = Parse(Call(workspace,
             "{\"operation\":\"execute_terminal_command\",\"command\":\"whoami\"}", null));
         var traversed = Parse(Call(workspace, Request("read_text", "../private.txt"), null));
@@ -132,7 +152,7 @@ internal sealed class LabForm : Form
     internal LabForm(string fixture)
     {
         workspace = fixture;
-        Text = "PAC Alpha Lab v0.2 — Windows";
+        Text = "PAC Alpha Lab v0.3 — AppContainer Windows";
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(920, 650);
         MinimumSize = new Size(800, 560);
@@ -154,17 +174,17 @@ internal sealed class LabForm : Form
         header.Dock = DockStyle.Fill;
         frame.Controls.Add(header, 0, 0);
         header.Controls.Add(new Label {
-            Text = "PAC  ·  ALPHA LAB v0.2", ForeColor = Color.White, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
+            Text = "PAC  ·  ALPHA LAB v0.3", ForeColor = Color.White, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
             AutoSize = true, Location = new Point(24, 14)
         });
         header.Controls.Add(new Label {
-            Text = "Thử nghiệm ngoại tuyến bằng dữ liệu mẫu. KHÔNG phải sandbox Windows.",
+            Text = "AppContainer Windows · Worker quyền hạn chế · Chỉ dữ liệu mẫu.",
             ForeColor = Color.FromArgb(229, 237, 250), AutoSize = true, Location = new Point(27, 65)
         });
 
         var note = new Label {
             Dock = DockStyle.Top, Height = 58,
-            Text = "CHỈ DỮ LIỆU MẪU   |   Không truy cập tệp cá nhân   |   Không cần quyền quản trị",
+            Text = "APPCONTAINER LAB   |   Không truy cập tệp cá nhân   |   Chưa nghiệm thu bản sản xuất",
             Font = new Font("Segoe UI", 9F, FontStyle.Bold),
             ForeColor = Color.FromArgb(129, 81, 9), BackColor = Color.FromArgb(255, 245, 217),
             TextAlign = ContentAlignment.MiddleCenter
@@ -235,7 +255,7 @@ internal sealed class LabForm : Form
             Font = new Font("Consolas", 10F), BackColor = Color.White, ForeColor = Color.FromArgb(36, 49, 64),
             BorderStyle = BorderStyle.FixedSingle,
             Text = "Chọn một nút bên trái để xem PAC Worker xử lý dữ liệu mẫu." + Environment.NewLine +
-                   Environment.NewLine + "Chế độ hiện tại: LAB. Chưa cách ly bằng tài khoản Windows riêng."
+                   Environment.NewLine + "Chế độ hiện tại: Native AppContainer Lab. Chưa kiểm thử Windows Home."
         };
         content.Controls.Add(output);
         output.BringToFront();
@@ -320,7 +340,7 @@ internal sealed class LabForm : Form
             if (!IsDisposed) output.Text = ok ?
                 "ĐẠT: Worker đọc dữ liệu mẫu, kiểm tra tệp, liệt kê thư mục;\r\n" +
                 "TỪ CHỐI: lệnh shell và đường dẫn vượt workspace.\r\n\r\n" +
-                "LƯU Ý: Đây không phải kiểm chứng quyền Windows ACL/AppContainer."
+                "ĐÃ KIỂM TRA: AppContainer token, Job Object, đọc được tệp cho phép, từ chối tệp chủ máy.\r\nLƯU Ý: Đây vẫn là bản lab, chưa nghiệm thu Windows Home hoặc mạng."
                 : "KHÔNG ĐẠT: Một phép kiểm tra lab không thành công.";
         }
         catch (Exception ex)
@@ -373,7 +393,7 @@ internal static class Program
             }
             if (!File.Exists(LabWorker.WorkerPath))
             {
-                MessageBox.Show("Thiếu pac-worker-lab.exe. Hãy giải nén đầy đủ bộ PAC Lab.",
+                MessageBox.Show("Thiếu PAC-AppContainer-Broker.exe. Hãy giải nén đầy đủ bộ PAC Lab.",
                     "PAC Alpha Lab", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
