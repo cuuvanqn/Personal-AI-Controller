@@ -255,16 +255,98 @@ int wmain(int argc, wchar_t** argv) {
 
   STARTUPINFOW start = {};
   start.cb = sizeof(start);
+  // CI experiment: bind the exact window station/desktop whose full
+  // access was checked under the same restricted token. No DACL edits.
+  wchar_t stationForChild[256] = {}, desktopForChild[256] = {};
+  DWORD objectBytes = 0;
+  if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
+                                  stationForChild, sizeof(stationForChild), &objectBytes)
+      || !GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME,
+                                    desktopForChild, sizeof(desktopForChild), &objectBytes))
+    return fail("Read current window station/desktop");
+  std::wstring childDesktop = std::wstring(stationForChild) + L"\\" + desktopForChild;
+  start.lpDesktop = childDesktop.data();
+  std::cout << "PAC_STARTUP_DESKTOP_DIAGNOSTIC: explicitly_selected=true\n";
   PROCESS_INFORMATION proc = {};
   std::wstring args = L"\"" + staged + L"\" --restricted-child \"" + sentinel + L"\"";
   std::vector<wchar_t> commandLine(args.begin(), args.end());
   commandLine.push_back(L'\0');
+  // CI-only experiment: explicitly specify the process/thread object's
+  // security descriptors. Default descriptors based on a restricted token
+  // can cause Access Denied when CreateProcessAsUser returns handles.
+  // RC is *not* an acceptable generic production DACL: this lab executable
+  // must never be integrated into PAC as a production broker.
+  std::wstring childAcl = L"D:P(A;;GA;;;" + userSid + L")(A;;GA;;;RC)";
+  PSECURITY_DESCRIPTOR childSd = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        childAcl.c_str(), SDDL_REVISION_1, &childSd, nullptr))
+    return fail("Child process descriptor");
+  SECURITY_ATTRIBUTES childAttrs = {};
+  childAttrs.nLength = sizeof(childAttrs);
+  childAttrs.lpSecurityDescriptor = childSd;
+  childAttrs.bInheritHandle = FALSE;
+
+  DWORD tokenTypeSize = 0;
+  TOKEN_TYPE tokenType = TokenImpersonation;
+  if (!GetTokenInformation(restricted.h, TokenType, &tokenType, sizeof(tokenType), &tokenTypeSize)
+      || tokenType != TokenPrimary) {
+    LocalFree(childSd);
+    return fail("Restricted token must be primary");
+  }
+  std::cout << "PAC_TOKEN_DIAGNOSTIC: primary=true restricted=true"
+            << " explicit_child_descriptor=true\n";
+  // CI diagnostic: check token HANDLE rights, not merely TokenType.
+  // Both native process APIs require TOKEN_QUERY|TOKEN_DUPLICATE|
+  // TOKEN_ASSIGN_PRIMARY. Token privileges and handle access differ.
+  HANDLE requiredTokenHandle = nullptr;
+  const DWORD requiredRights = TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
+                               TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+  const BOOL duplicated = DuplicateHandle(GetCurrentProcess(), restricted.h,
+                                          GetCurrentProcess(), &requiredTokenHandle,
+                                          requiredRights, FALSE, 0);
+  const DWORD rightsError = duplicated ? ERROR_SUCCESS : GetLastError();
+  if (duplicated) CloseHandle(requiredTokenHandle);
+  std::cout << "PAC_TOKEN_HANDLE_PREFLIGHT: required_process_launch_rights="
+            << (duplicated ? "allowed" : "denied")
+            << " code=" << rightsError << "\n";
+
+  SafeHandle callerHandleCheck;
+  const BOOL callerTokenOpen = OpenProcessToken(GetCurrentProcess(),
+                               TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE,
+                               &callerHandleCheck.h);
+  const DWORD callerErr = callerTokenOpen ? ERROR_SUCCESS : GetLastError();
+  std::cout << "PAC_CALLER_TOKEN_PREFLIGHT: duplicate_impersonate_rights="
+            << (callerTokenOpen ? "allowed" : "denied")
+            << " code=" << callerErr << "\n";
+  // Do not loosen native security policy or silently run as original owner.
+  // Image-launch preflight: reading an EXE is not the same as opening it
+  // with execute rights and mapping a PE image section. This isolates a
+  // potential executable-image policy failure (no code is executed here).
+  if (!ImpersonateLoggedOnUser(restricted.h))
+    return fail("Image preflight impersonation");
+  HANDLE executable = CreateFileW(staged.c_str(), GENERIC_READ | GENERIC_EXECUTE,
+                                  FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  const DWORD executableErr = executable == INVALID_HANDLE_VALUE
+                             ? GetLastError() : ERROR_SUCCESS;
+  HANDLE imageSection = nullptr;
+  DWORD sectionErr = ERROR_SUCCESS;
+  if (executable != INVALID_HANDLE_VALUE) {
+    imageSection = CreateFileMappingW(executable, nullptr, PAGE_READONLY | SEC_IMAGE,
+                                      0, 0, nullptr);
+    if (!imageSection) sectionErr = GetLastError();
+    if (imageSection) CloseHandle(imageSection);
+    CloseHandle(executable);
+  }
+  if (!RevertToSelf()) return fail("Image preflight revert");
+  std::cout << "PAC_IMAGE_PREFLIGHT: read_execute_code=" << executableErr
+            << " sec_image_code=" << sectionErr << "\n";
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
   // Two documented Windows APIs, but only the *same verified restricted
   // primary token*. Do NOT fall back to CreateProcessW / owner's identity.
   BOOL started = CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
-                                     nullptr, nullptr, FALSE,
+                                     &childAttrs, &childAttrs, FALSE,
                                      CREATE_SUSPENDED | CREATE_NO_WINDOW,
                                      nullptr, systemDirectory, &start, &proc);
   if (!started) {
@@ -278,6 +360,7 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     std::cout << "PAC_DIAGNOSTIC_PRIMARY_API: CreateProcessAsUserW\n";
   }
+  LocalFree(childSd);
   SafeHandle childProcess;
   SafeHandle childThread;
   childProcess.h = proc.hProcess;

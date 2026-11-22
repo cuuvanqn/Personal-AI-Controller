@@ -1,0 +1,51 @@
+name: PAC native Windows sandbox proof (experimental, release-blocking)
+on:
+  pull_request:
+    paths:
+      - 'native/windows/**'
+      - '.github/workflows/pac-native-sandbox-experimental.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pac-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-restricted-process:
+    name: Windows native restricted-process proof (must pass before release)
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout no-credential source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compile and prove native thread access denial
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (!(Test-Path $vswhere)) { throw 'MSVC not installed' }
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (!$vs) { throw 'Visual Studio tools not found' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment unavailable' }
+          $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-token-proof.cpp /Fe:pac-restricted-token-proof.exe /link advapi32.lib && pac-restricted-token-proof.exe'
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compile and prove restricted process identity and file denial
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (!(Test-Path $vswhere)) { throw 'MSVC not installed' }
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (!$vs) { throw 'Visual Studio tools not found' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment unavailable' }
+          $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib user32.lib && pac-restricted-process-proof.exe --ci-lab'
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
