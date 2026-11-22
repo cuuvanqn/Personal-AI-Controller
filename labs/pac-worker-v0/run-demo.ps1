@@ -13,6 +13,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Worker process failed' }
   $reply = $raw | ConvertFrom-Json
   if (!$reply.ok -or $reply.result.text -ne 'PAC lab first run') {
+    # Printed content is the generated test fixture only, never private user data.
+    Write-Host ('PAC_LAB_DIAG: ok=' + $reply.ok + ' error=' + $reply.error +
+      ' textLength=' + ([string]$reply.result.text).Length)
     throw 'Worker IPC/read-only smoke test failed'
   }
   Write-Host 'PAC_LAB_V0_PASSED: fixture read via compiled worker executable'
