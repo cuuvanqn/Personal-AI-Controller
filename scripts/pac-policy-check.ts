@@ -16,6 +16,7 @@ const paths = {
   telemetry: "src/daemon/telemetry.ts",
   updater: "src/daemon/routes/update-routes.ts",
   system: "src/daemon/routes/system-routes.ts",
+  desktop: "src/daemon/desktop.ts",
   restricted: "src/daemon/pac-restricted-task-engine.ts",
 } as const;
 
@@ -36,6 +37,7 @@ export function checkPacPolicy(sources: SourceSet): string[] {
   const telemetry = source(paths.telemetry);
   const updater = source(paths.updater);
   const system = source(paths.system);
+  const desktop = source(paths.desktop);
   const restricted = source(paths.restricted);
 
   if (!/hostname:\s*["']127\.0\.0\.1["']/.test(index)) {
@@ -88,6 +90,18 @@ export function checkPacPolicy(sources: SourceSet): string[] {
   }
   if (!/jsonResponse\(\{ status: "ok" \}/.test(system)) {
     errors.push("Public health response must not reveal device metadata");
+  }
+
+  // All inherited native-desktop functions must remain guarded until a
+  // separate Windows account and explicit consent gateway are available.
+  const quarantinedFunctions = [
+    "listWindows", "takeScreenshot", "mouseAction", "keyboardAction",
+    "getCuaToolList", "findCuaDriverExe", "executeCuaTool"
+  ];
+  for (const name of quarantinedFunctions) {
+    const escaped = name.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\  if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {");
+    const fn = new RegExp("export async function " + escaped + "\\\\s*\\\\([^)]*\\\\)(?::[^\\\\{]*)?\\\\{\\\\s*denyLegacyDesktopAccess\\\\(\\\\);");
+    if (!fn.test(desktop)) errors.push("Legacy desktop function missing deny guard: " + name);
   }
 
   if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {
