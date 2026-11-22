@@ -283,6 +283,30 @@ int wmain(int argc, wchar_t** argv) {
   }
   std::cout << "PAC_TOKEN_DIAGNOSTIC: primary=true restricted=true"
             << " explicit_child_descriptor=true\n";
+  // CI diagnostic: check token HANDLE rights, not merely TokenType.
+  // Both native process APIs require TOKEN_QUERY|TOKEN_DUPLICATE|
+  // TOKEN_ASSIGN_PRIMARY. Token privileges and handle access differ.
+  HANDLE requiredTokenHandle = nullptr;
+  const DWORD requiredRights = TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
+                               TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+  const BOOL duplicated = DuplicateHandle(GetCurrentProcess(), restricted.h,
+                                          GetCurrentProcess(), &requiredTokenHandle,
+                                          requiredRights, FALSE, 0);
+  const DWORD rightsError = duplicated ? ERROR_SUCCESS : GetLastError();
+  if (duplicated) CloseHandle(requiredTokenHandle);
+  std::cout << "PAC_TOKEN_HANDLE_PREFLIGHT: required_process_launch_rights="
+            << (duplicated ? "allowed" : "denied")
+            << " code=" << rightsError << "\n";
+
+  SafeHandle callerHandleCheck;
+  const BOOL callerTokenOpen = OpenProcessToken(GetCurrentProcess(),
+                               TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE,
+                               &callerHandleCheck.h);
+  const DWORD callerErr = callerTokenOpen ? ERROR_SUCCESS : GetLastError();
+  std::cout << "PAC_CALLER_TOKEN_PREFLIGHT: duplicate_impersonate_rights="
+            << (callerTokenOpen ? "allowed" : "denied")
+            << " code=" << callerErr << "\n";
+  // Do not loosen native security policy or silently run as original owner.
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
   // Two documented Windows APIs, but only the *same verified restricted
