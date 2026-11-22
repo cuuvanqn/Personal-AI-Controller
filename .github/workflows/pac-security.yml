@@ -2,7 +2,7 @@ name: PAC baseline checks
 
 on:
   pull_request:
-    branches: [main, pac/ci-security-baseline, pac/security-deny-by-default]
+    branches: [main, pac/ci-security-baseline, pac/security-deny-by-default, pac/disable-vendor-egress]
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,4 +40,4 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Run inherited baseline tests (not PAC security certification)
-        run: bun test tests/security.test.ts tests/oauth-security.test.ts tests/pac-privacy.test.ts
+        run: bun test tests/security.test.ts tests/oauth-security.test.ts tests/oauth.test.ts tests/pac-privacy.test.ts
