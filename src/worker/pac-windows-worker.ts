@@ -68,7 +68,8 @@ function validate(raw: unknown): Request {
 }
 
 /** Check every path component, not merely the final component. */
-async function resolveReadable(root: string, relative: string): Promise<string> {
+async function resolveReadable(root: string, relative: string, phase?: { step: string }): Promise<string> {
+  if (phase) phase.step = "ROOT_REALPATH";
   const rootReal = await fs.realpath(root);
   const candidate = path.resolve(rootReal, relative);
   if (!within(rootReal, candidate)) invalid("ACCESS_DENIED");
@@ -76,22 +77,27 @@ async function resolveReadable(root: string, relative: string): Promise<string> 
   const parts = path.relative(rootReal, candidate).split(path.sep).filter(Boolean);
   for (const part of parts) {
     cursor = path.join(cursor, part);
+    if (phase) phase.step = "COMPONENT_LSTAT";
     const info = await fs.lstat(cursor);
     if (info.isSymbolicLink()) invalid("ACCESS_DENIED");
   }
+  if (phase) phase.step = "TARGET_REALPATH";
   const canonical = await fs.realpath(candidate);
   if (!within(rootReal, canonical)) invalid("ACCESS_DENIED");
   return canonical;
 }
 
 export async function runReadOnlyWorkerTask(root: string, raw: unknown): Promise<WorkerReply> {
+  const phase = { step: "VALIDATE" };
   try {
     const task = validate(raw);
-    const target = await resolveReadable(root, task.relativePath);
+    const target = await resolveReadable(root, task.relativePath, phase);
+    phase.step = "TARGET_STAT";
     const stat = await fs.stat(target);
     if (task.operation === "list_directory") {
       if (!stat.isDirectory()) invalid("NOT_DIRECTORY");
       const limit = task.maxEntries ?? MAX_ENTRIES;
+      phase.step = "READ_DIRECTORY";
       const names = await fs.readdir(target, { withFileTypes: true });
       return { ok: true, result: {
         entries: names.slice(0, limit).map(x => ({
@@ -108,11 +114,14 @@ export async function runReadOnlyWorkerTask(root: string, raw: unknown): Promise
     if (task.operation === "inspect_file") return { ok: true, result: { kind: "file", size: stat.size } };
     const limit = task.maxBytes ?? MAX_READ;
     if (stat.size > limit) invalid("TOO_LARGE");
+    phase.step = "FILE_OPEN";
     const handle = await fs.open(target, "r");
     try {
+      phase.step = "HANDLE_STAT";
       const opened = await handle.stat();
       if (!opened.isFile() || opened.size > limit || opened.nlink > 1) invalid("TOO_LARGE");
       const data = Buffer.alloc(opened.size);
+      phase.step = "HANDLE_READ";
       const result = await handle.read(data, 0, data.length, 0);
       if (result.bytesRead !== data.length) invalid("SHORT_READ");
       const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
@@ -121,6 +130,15 @@ export async function runReadOnlyWorkerTask(root: string, raw: unknown): Promise
       await handle.close();
     }
   } catch (error) {
+    // CI-only sanitized phase + errno. Never expose OS paths or file contents.
+    const runtimeEnv: Record<string, string | undefined> = process.env;
+    if (runtimeEnv["PAC_WORKER_DIAGNOSTICS"] === "1" &&
+        runtimeEnv["PAC_WORKER_LAB_MODE"] === "1" && runtimeEnv["NODE_ENV"] === "test") {
+      const maybeCode = error && typeof error === "object" && "code" in error
+        ? (error as { code?: unknown }).code : undefined;
+      const code = typeof maybeCode === "string" ? maybeCode.replace(/[^A-Za-z0-9_]/g, "") : "NO_CODE";
+      return { ok: false, error: "LAB_DIAG_" + phase.step + "_" + code };
+    }
     const message = error instanceof Error ? error.message : "";
     const known = ["INVALID_REQUEST", "OPERATION_DENIED", "INVALID_PATH", "UNKNOWN_FIELD",
       "INVALID_LIMIT", "ACCESS_DENIED", "NOT_DIRECTORY", "NOT_FILE", "TOO_LARGE", "SHORT_READ"];
