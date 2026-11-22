@@ -17,6 +17,8 @@ const paths = {
   updater: "src/daemon/routes/update-routes.ts",
   system: "src/daemon/routes/system-routes.ts",
   desktop: "src/daemon/desktop.ts",
+  worker: "src/worker/pac-windows-worker.ts",
+  launcher: "src/worker/pac-worker-launcher.ts",
   restricted: "src/daemon/pac-restricted-task-engine.ts",
 } as const;
 
@@ -38,6 +40,8 @@ export function checkPacPolicy(sources: SourceSet): string[] {
   const updater = source(paths.updater);
   const system = source(paths.system);
   const desktop = source(paths.desktop);
+  const worker = source(paths.worker);
+  const launcher = source(paths.launcher);
   const restricted = source(paths.restricted);
 
   if (!/hostname:\s*["']127\.0\.0\.1["']/.test(index)) {
@@ -104,6 +108,13 @@ export function checkPacPolicy(sources: SourceSet): string[] {
     if (begin < 0 || guardAt < 0 || guardAt - begin > 260) {
       errors.push("Legacy desktop function missing deny guard: " + name);
     }
+  }
+
+  if (!launcher.includes('OS_SANDBOX_NOT_CONFIGURED') ||
+      !launcher.includes('isLabWorkerEnabled(process.env)') ||
+      !launcher.includes('proc.stdout.getReader()') ||
+      !worker.includes('OS_SANDBOX_NOT_CONFIGURED')) {
+    errors.push("Worker must remain lab-gated and bounded while native OS sandbox is absent");
   }
 
   if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {
