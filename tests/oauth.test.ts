@@ -71,27 +71,18 @@ describe("OAuth 2.0 / 2.1 Provider & Discovery Tests", () => {
     expect(html).toContain("Cho phép & Kết nối");
   });
 
-  it("handles auto_approve=1 from trusted network (localhost) and redirects with code, state, and iss (RFC 9207)", async () => {
-    // Bản sửa bảo mật 2026-11-21: auto_approve chỉ còn hiệu lực từ mạng tin cậy.
-    const localOrigin = "http://localhost:1993";
+  it("requires consent even for auto_approve requests from localhost", async () => {
+    const origin = "http://localhost:1993";
     const redirectTarget = "https://chatgpt.com/aip/plugin-test/oauth/callback";
-    const authUrl = `${localOrigin}/oauth/authorize?client_id=chatgpt&redirect_uri=${encodeURIComponent(redirectTarget)}&state=xyzState&auto_approve=1`;
-    const req = new Request(authUrl, {
-      method: "GET",
-      headers: { host: "localhost:1993" }
-    });
+    const authUrl = `${origin}/oauth/authorize?client_id=chatgpt&redirect_uri=${encodeURIComponent(redirectTarget)}&state=xyzState&auto_approve=1`;
+    const req = new Request(authUrl, { method: "GET", headers: { host: "localhost:1993" } });
     const res = await handleOAuthRoutes(req, new URL(req.url));
     expect(res).not.toBeNull();
-    expect(res!.status).toBe(302);
-
-    const location = res!.headers.get("location");
-    expect(location).not.toBeNull();
-
-    const redirectUrl = new URL(location!);
-    expect(redirectUrl.origin).toBe("https://chatgpt.com");
-    expect(redirectUrl.searchParams.get("state")).toBe("xyzState");
-    expect(redirectUrl.searchParams.get("iss")).toBe(localOrigin);
-    expect(redirectUrl.searchParams.get("code")).toMatch(/^otter_code_/);
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("location")).toBeNull();
+    const html = await res!.text();
+    expect(html).toContain("auth_token");
+    expect(html).not.toContain("otter_code_");
   });
 
   it("ignores auto_approve=1 from public internet (shows consent screen instead)", async () => {
