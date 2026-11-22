@@ -49,3 +49,25 @@ jobs:
           $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib user32.lib && pac-restricted-process-proof.exe --ci-lab'
           cmd.exe /d /s /c $cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  appcontainer-child-proof:
+    name: Windows AppContainer child (OS permission denial)
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout no-credential source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build native AppContainer proof and test OS access decisions
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (!(Test-Path $vswhere)) { throw 'MSVC not available' }
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (!$vs) { throw 'Visual Studio unavailable' }
+          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment unavailable' }
+          $cmd = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-appcontainer-process-proof.cpp /Fe:pac-appcontainer-process-proof.exe /link advapi32.lib userenv.lib ole32.lib && pac-appcontainer-process-proof.exe --ci-lab'
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
