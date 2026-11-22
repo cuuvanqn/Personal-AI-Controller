@@ -230,11 +230,23 @@ int wmain(int argc, wchar_t** argv) {
   commandLine.push_back(L'\0');
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
-  if (!CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
-                            nullptr, nullptr, FALSE,
-                            CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                            nullptr, systemDirectory, &start, &proc))
-    return fail("CreateProcessAsUser restricted token");
+  // Two documented Windows APIs, but only the *same verified restricted
+  // primary token*. Do NOT fall back to CreateProcessW / owner's identity.
+  BOOL started = CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
+                                     nullptr, nullptr, FALSE,
+                                     CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                                     nullptr, systemDirectory, &start, &proc);
+  if (!started) {
+    const DWORD firstError = GetLastError();
+    std::cerr << "PAC_DIAGNOSTIC_AS_USER_FAILED: code=" << firstError << "\n";
+    started = CreateProcessWithTokenW(restricted.h, 0, staged.c_str(), commandLine.data(),
+                                      CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                                      nullptr, systemDirectory, &start, &proc);
+    if (!started) return fail("Both restricted-token process APIs failed");
+    std::cout << "PAC_DIAGNOSTIC_ALTERNATE_API: CreateProcessWithTokenW\n";
+  } else {
+    std::cout << "PAC_DIAGNOSTIC_PRIMARY_API: CreateProcessAsUserW\n";
+  }
   SafeHandle childProcess;
   SafeHandle childThread;
   childProcess.h = proc.hProcess;
