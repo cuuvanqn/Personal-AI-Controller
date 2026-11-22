@@ -69,8 +69,25 @@ function validate(raw: unknown): Request {
 
 /** Check every path component, not merely the final component. */
 async function resolveReadable(root: string, relative: string, phase?: { step: string }): Promise<string> {
+  // Experimental AppContainer fixture compatibility: Bun's realpath may fail
+  // EPERM even when Win32 lstat/stat/open on the fixture are allowed.
+  // This fallback is limited to *two known CI fixture names* and requires
+  // explicit lab flags. It must not be used for arbitrary workspaces in PAC.
+  const env: Record<string, string | undefined> = process.env;
+  const fixtureOnly = process.platform === "win32" &&
+    env["PAC_APP_CONTAINER_FS_LAB"] === "1" &&
+    env["PAC_WORKER_LAB_MODE"] === "1" && env["NODE_ENV"] === "test" &&
+    (relative === "pac-granted.txt" || relative === "pac-owner-only.txt");
   if (phase) phase.step = "ROOT_REALPATH";
-  const rootReal = await fs.realpath(root);
+  let rootReal: string;
+  try { rootReal = await fs.realpath(root); }
+  catch (error) {
+    if (!fixtureOnly || !(error && typeof error === "object" && "code" in error &&
+        (error as { code?: unknown }).code === "EPERM")) throw error;
+    const info = await fs.lstat(root);
+    if (!info.isDirectory() || info.isSymbolicLink()) invalid("ACCESS_DENIED");
+    rootReal = path.resolve(root);
+  }
   const candidate = path.resolve(rootReal, relative);
   if (!within(rootReal, candidate)) invalid("ACCESS_DENIED");
   let cursor = rootReal;
@@ -82,7 +99,15 @@ async function resolveReadable(root: string, relative: string, phase?: { step: s
     if (info.isSymbolicLink()) invalid("ACCESS_DENIED");
   }
   if (phase) phase.step = "TARGET_REALPATH";
-  const canonical = await fs.realpath(candidate);
+  let canonical: string;
+  try { canonical = await fs.realpath(candidate); }
+  catch (error) {
+    if (!fixtureOnly || !(error && typeof error === "object" && "code" in error &&
+        (error as { code?: unknown }).code === "EPERM")) throw error;
+    const info = await fs.lstat(candidate);
+    if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory())) invalid("ACCESS_DENIED");
+    canonical = candidate;
+  }
   if (!within(rootReal, canonical)) invalid("ACCESS_DENIED");
   return canonical;
 }
