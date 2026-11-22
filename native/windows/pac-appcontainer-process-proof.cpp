@@ -93,19 +93,44 @@ static int child(int argc, wchar_t** argv) {
     int networkError = 0;
     if (sock == INVALID_SOCKET) networkError = WSAGetLastError();
     else {
+        u_long nonblocking = 1;
+        if (ioctlsocket(sock, FIONBIO, &nonblocking) == SOCKET_ERROR)
+            return fail("Set nonblocking socket");
         sockaddr_in addr = {};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(static_cast<u_short>(port));
         const int connected = connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
         networkError = connected == SOCKET_ERROR ? WSAGetLastError() : ERROR_SUCCESS;
+        if (networkError == WSAEWOULDBLOCK) {
+            fd_set writable = {};
+            fd_set exceptional = {};
+            FD_SET(sock, &writable);
+            FD_SET(sock, &exceptional);
+            timeval timeout = {};
+            timeout.tv_sec = 2;
+            int selected = select(0, nullptr, &writable, &exceptional, &timeout);
+            if (selected == 0) networkError = WSAETIMEDOUT;
+            else if (selected == SOCKET_ERROR) networkError = WSAGetLastError();
+            else {
+                int finalError = 0;
+                int optionSize = sizeof(finalError);
+                networkError = getsockopt(sock, SOL_SOCKET, SO_ERROR,
+                    reinterpret_cast<char*>(&finalError), &optionSize) == SOCKET_ERROR
+                    ? WSAGetLastError() : finalError;
+            }
+        }
         closesocket(sock);
     }
     WSACleanup();
     if (networkError != WSAEACCES) {
+        // 120 means inconclusive timeout; 121 means security failure
+        // (connection succeeded); 122 is any other unexpected network error.
         std::cerr << "PAC_APPCONTAINER_NETWORK_FAILED: loopback_code="
                   << networkError << " (expected WSAEACCES)\n";
-        return 1;
+        if (networkError == WSAETIMEDOUT) return 120;
+        if (networkError == ERROR_SUCCESS) return 121;
+        return 122;
     }
     std::cout << "PAC_APPCONTAINER_CHILD_PASSED: appcontainer=true"
               << " granted_read=true"
