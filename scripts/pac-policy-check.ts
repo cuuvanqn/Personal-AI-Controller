@@ -99,7 +99,14 @@ export function checkPacPolicy(sources: SourceSet): string[] {
     "getCuaToolList", "findCuaDriverExe", "executeCuaTool"
   ];
   for (const name of quarantinedFunctions) {
-    const escaped = name.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\  if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {");
+    const begin = desktop.indexOf("export async function " + name + "(");
+    const guardAt = begin < 0 ? -1 : desktop.indexOf("denyLegacyDesktopAccess();", begin);
+    if (begin < 0 || guardAt < 0 || guardAt - begin > 260) {
+      errors.push("Legacy desktop function missing deny guard: " + name);
+    }
+  }
+
+  if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {");
     const fn = new RegExp("export async function " + escaped + "\\\\s*\\\\([^)]*\\\\)(?::[^\\\\{]*)?\\\\{\\\\s*denyLegacyDesktopAccess\\\\(\\\\);");
     if (!fn.test(desktop)) errors.push("Legacy desktop function missing deny guard: " + name);
   }
