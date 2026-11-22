@@ -3,6 +3,7 @@
 // It uses disposable AppContainer profile fixtures, never user/POS files.
 // CI-only; no GUI/remote integration or production security claim.
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
 #include <userenv.h>
