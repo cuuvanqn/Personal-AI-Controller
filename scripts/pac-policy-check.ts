@@ -15,6 +15,7 @@ const paths = {
   terminal: "src/daemon/terminal.ts",
   telemetry: "src/daemon/telemetry.ts",
   updater: "src/daemon/routes/update-routes.ts",
+  system: "src/daemon/routes/system-routes.ts",
   restricted: "src/daemon/pac-restricted-task-engine.ts",
 } as const;
 
@@ -34,6 +35,7 @@ export function checkPacPolicy(sources: SourceSet): string[] {
   const terminal = source(paths.terminal);
   const telemetry = source(paths.telemetry);
   const updater = source(paths.updater);
+  const system = source(paths.system);
   const restricted = source(paths.restricted);
 
   if (!/hostname:\s*["']127\.0\.0\.1["']/.test(index)) {
@@ -74,6 +76,18 @@ export function checkPacPolicy(sources: SourceSet): string[] {
   }
   if (!/exitCode:\s*126/.test(terminal) || !/inputAllowed:\s*false/.test(terminal)) {
     errors.push("Legacy terminal must remain disabled");
+  }
+
+  // These rules cover only selected attack paths; an independent source audit is still required.
+  if (!/Direct CUA commands are disabled pending sandboxed worker approval/.test(index)) {
+    errors.push("Direct CUA CLI must remain unavailable");
+  }
+  if (!/PAC forbids granting Full Access over HTTP/.test(system) ||
+      !/Remote workspace registration is disabled pending local owner approval/.test(system)) {
+    errors.push("HTTP permission escalation or workspace registration was re-enabled");
+  }
+  if (!/jsonResponse\(\{ status: "ok" \}/.test(system)) {
+    errors.push("Public health response must not reveal device metadata");
   }
 
   if (/\bfetch\s*\(|\bdoFetch\s*\(/.test(telemetry)) {
