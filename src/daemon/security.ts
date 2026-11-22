@@ -131,27 +131,54 @@ export function getAllowedWorkspaces(): string[] {
  * Ném ngoại lệ nếu đường dẫn nằm ngoài các workspace được phép.
  * Khi chế độ Full Access được bật, cho phép mọi đường dẫn hợp lệ trên hệ thống.
  */
+/**
+ * Resolve the deepest existing ancestor, then project the non-existent
+ * suffix onto it. Prevents existing symlinks and Windows junctions in the
+ * path from escaping a workspace during file creation.
+ *
+ * This is a path validation guard, not an atomic filesystem sandbox.
+ * OS-level ACLs and no-follow handles are still required against TOCTOU.
+ */
+function realPathForAccess(absolutePath: string): string {
+  let cursor = absolutePath;
+  const missing: string[] = [];
+  while (!fs.existsSync(cursor)) {
+    const parent = path.dirname(cursor);
+    if (parent === cursor) throw new Error("Unable to resolve file path");
+    missing.unshift(path.basename(cursor));
+    cursor = parent;
+  }
+  const canonical = fs.realpathSync.native(cursor);
+  return path.resolve(canonical, ...missing);
+}
+
+function pathWithin(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
+}
+
 export function assertSafePath(targetPath: string): string {
-  if (!targetPath) {
+  if (!targetPath || typeof targetPath !== "string") {
     throw new Error("Đường dẫn tệp tin không hợp lệ.");
   }
 
   const resolved = path.resolve(targetPath);
+  const canonical = realPathForAccess(resolved);
 
-  // Nếu chế độ Full Access được bật: cho phép mọi đường dẫn
-  if (isFullAccessEnabled()) {
-    return resolved;
-  }
-
+  // In PAC, even a legacy Full Access flag must not silently expand
+  // filesystem permissions. Enable only through a redesigned OS sandbox.
   const isAllowed = Array.from(allowedWorkspaces).some(ws => {
-    if (ws === "*") return true;
-    return resolved === ws || resolved.startsWith(ws + path.sep);
+    if (ws === "*") return false;
+    try {
+      const realWorkspace = realPathForAccess(path.resolve(ws));
+      return pathWithin(realWorkspace, canonical);
+    } catch {
+      return false;
+    }
   });
 
   if (!isAllowed) {
-    throw new Error(
-      `Truy cập bị từ chối: Đường dẫn '${targetPath}' nằm ngoài thư mục làm việc an toàn được cấp phép. Các thư mục hợp lệ: ${Array.from(allowedWorkspaces).join(", ")}`
-    );
+    throw new Error(`Truy cập bị từ chối: Đường dẫn '${targetPath}' nằm ngoài thư mục làm việc an toàn được cấp phép.`);
   }
 
   return resolved;
