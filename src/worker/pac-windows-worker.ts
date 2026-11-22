@@ -137,7 +137,29 @@ export async function runReadOnlyWorkerTask(root: string, raw: unknown): Promise
       const maybeCode = error && typeof error === "object" && "code" in error
         ? (error as { code?: unknown }).code : undefined;
       const code = typeof maybeCode === "string" ? maybeCode.replace(/[^A-Za-z0-9_]/g, "") : "NO_CODE";
-      return { ok: false, error: "LAB_DIAG_" + phase.step + "_" + code };
+      // CI-only fixture probe: discover whether Bun's realpath fails while
+      // lstat/open are usable under the verified AppContainer Windows token.
+      let probe = "";
+      if (phase.step === "ROOT_REALPATH" &&
+          raw && typeof raw === "object" &&
+          (raw as { relativePath?: unknown }).relativePath === "pac-granted.txt") {
+        const test = async (name: string, action: () => Promise<unknown>) => {
+          try { await action(); return name + "OK"; }
+          catch (err) {
+            const c = err && typeof err === "object" && "code" in err
+              ? String((err as {code?: unknown}).code).replace(/[^A-Za-z0-9_]/g, "") : "ERR";
+            return name + c;
+          }
+        };
+        probe += "_" + await test("RS", () => fs.stat(root));
+        probe += "_" + await test("RL", () => fs.lstat(root));
+        probe += "_" + await test("FL", () => fs.lstat(path.join(root, "pac-granted.txt")));
+        probe += "_" + await test("FO", async () => {
+          const handle = await fs.open(path.join(root, "pac-granted.txt"), "r");
+          await handle.close();
+        });
+      }
+      return { ok: false, error: "LAB_DIAG_" + phase.step + "_" + code + probe };
     }
     const message = error instanceof Error ? error.message : "";
     const known = ["INVALID_REQUEST", "OPERATION_DENIED", "INVALID_PATH", "UNKNOWN_FIELD",
