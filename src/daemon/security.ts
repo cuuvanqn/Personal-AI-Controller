@@ -131,27 +131,54 @@ export function getAllowedWorkspaces(): string[] {
  * Ném ngoại lệ nếu đường dẫn nằm ngoài các workspace được phép.
  * Khi chế độ Full Access được bật, cho phép mọi đường dẫn hợp lệ trên hệ thống.
  */
+/**
+ * Resolve the deepest existing ancestor, then project the non-existent
+ * suffix onto it. Prevents existing symlinks and Windows junctions in the
+ * path from escaping a workspace during file creation.
+ *
+ * This is a path validation guard, not an atomic filesystem sandbox.
+ * OS-level ACLs and no-follow handles are still required against TOCTOU.
+ */
+function realPathForAccess(absolutePath: string): string {
+  let cursor = absolutePath;
+  const missing: string[] = [];
+  while (!fs.existsSync(cursor)) {
+    const parent = path.dirname(cursor);
+    if (parent === cursor) throw new Error("Unable to resolve file path");
+    missing.unshift(path.basename(cursor));
+    cursor = parent;
+  }
+  const canonical = fs.realpathSync.native(cursor);
+  return path.resolve(canonical, ...missing);
+}
+
+function pathWithin(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
+}
+
 export function assertSafePath(targetPath: string): string {
-  if (!targetPath) {
+  if (!targetPath || typeof targetPath !== "string") {
     throw new Error("Đường dẫn tệp tin không hợp lệ.");
   }
 
   const resolved = path.resolve(targetPath);
+  const canonical = realPathForAccess(resolved);
 
-  // Nếu chế độ Full Access được bật: cho phép mọi đường dẫn
-  if (isFullAccessEnabled()) {
-    return resolved;
-  }
-
+  // In PAC, even a legacy Full Access flag must not silently expand
+  // filesystem permissions. Enable only through a redesigned OS sandbox.
   const isAllowed = Array.from(allowedWorkspaces).some(ws => {
-    if (ws === "*") return true;
-    return resolved === ws || resolved.startsWith(ws + path.sep);
+    if (ws === "*") return false;
+    try {
+      const realWorkspace = realPathForAccess(path.resolve(ws));
+      return pathWithin(realWorkspace, canonical);
+    } catch {
+      return false;
+    }
   });
 
   if (!isAllowed) {
-    throw new Error(
-      `Truy cập bị từ chối: Đường dẫn '${targetPath}' nằm ngoài thư mục làm việc an toàn được cấp phép. Các thư mục hợp lệ: ${Array.from(allowedWorkspaces).join(", ")}`
-    );
+    throw new Error(`Truy cập bị từ chối: Đường dẫn '${targetPath}' nằm ngoài thư mục làm việc an toàn được cấp phép.`);
   }
 
   return resolved;
@@ -201,7 +228,7 @@ export function ensureAuthToken(): string {
     }
     fs.writeFileSync(path.join(dir, "auth.token"), newToken, "utf-8");
     cachedAuthToken = newToken;
-    console.log(`[Security] 🔑 Đã tạo khóa bảo mật mới tại ~/.otter/auth.token: ${newToken}`);
+    console.log("[Security] Authentication token created in local credential file (value not logged).");
   } catch (err) {
     console.warn("[Security] Could not persist auth token to ~/.otter/auth.token", err);
     cachedAuthToken = newToken;
@@ -312,59 +339,16 @@ export function getTailscaleIp(): string | null {
 }
 
 /**
- * Kiểm tra xác thực (Authentication).
- * Quy tắc an toàn:
- * 1. Nếu request đến từ Internet (Cloudflare Tunnel hoặc remote host công khai), BẮT BUỘC phải có token.
- * 2. Nếu request đến từ Localhost, mạng Tailscale VPN hoặc Private LAN, được miễn trừ token khi OTTER_API_KEY chưa đặt.
- * 3. Nếu có OTTER_API_KEY được cấu hình (kể cả trên localhost/Tailscale), BẮT BUỘC phải có token.
- * 4. Hỗ trợ Authorization: Bearer <token> hoặc query param ?token=<token>.
+ * PAC initial hardening: deny unauthenticated requests on ALL networks.
+ * The host/IP is never accepted as proof of identity.
+ * URL query tokens are removed to prevent token leakage in access logs/history.
  */
-export function isRequestAuthorized(req: Request, url: URL, clientIp?: string): boolean {
-  const token = getAuthToken();
-
-  // Kiểm tra Header Authorization
-  const authHeader = req.headers.get("authorization");
-  if (authHeader && authHeader.trim().startsWith("Bearer ")) {
-    const provided = authHeader.trim().slice(7).trim();
-    if (token && provided === token) {
-      return true;
-    }
-    // Access token OAuth cấp riêng cho từng client (thu hồi được từng client).
-    if (validateOAuthAccessToken(provided)) {
-      return true;
-    }
-  }
-
-  // Kiểm tra Query Parameter
-  const tokenParam = url.searchParams.get("token");
-  if (tokenParam && token && tokenParam.trim() === token) {
-    return true;
-  }
-  if (tokenParam && validateOAuthAccessToken(tokenParam.trim())) {
-    return true;
-  }
-
-  // Kiểm tra host và client xuất xứ
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
-  const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  const effectiveClientIp = clientIp || forwardedFor || realIp || "";
-
-  // Nếu cả host VÀ client IP (nếu có) thuộc Tailscale / Localhost / Private LAN:
-  // Được coi là truy cập mạng tin cậy an toàn
-  const isHostTrusted = isTrustedHostOrIp(host);
-  const isClientTrusted = effectiveClientIp ? isTrustedHostOrIp(effectiveClientIp) : isHostTrusted;
-  const isTrustedNetwork = isHostTrusted && isClientTrusted;
-
-  if (!isTrustedNetwork) {
-    // Khi đi qua Cloudflare Tunnel hoặc truy cập ngoài mạng, BẮT BUỘC chặn nếu không có token
-    return false;
-  }
-
-  // Nếu ở mạng nội bộ (Local / Tailscale / Private LAN) và người dùng chưa đặt OTTER_API_KEY, cho phép truy cập
-  if (!process.env.OTTER_API_KEY) {
-    return true;
-  }
-
-  return false;
+export function isRequestAuthorized(req: Request, _url: URL, _clientIp?: string): boolean {
+  const authorization = req.headers.get("authorization")?.trim() || "";
+  if (!authorization.startsWith("Bearer ")) return false;
+  const provided = authorization.slice("Bearer ".length).trim();
+  if (!provided) return false;
+  const masterToken = getAuthToken();
+  if (masterToken && provided === masterToken) return true;
+  return validateOAuthAccessToken(provided);
 }

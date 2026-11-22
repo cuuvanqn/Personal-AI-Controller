@@ -1,0 +1,59 @@
+name: PAC baseline checks
+
+on:
+  pull_request:
+    # Every PR base branch is tested, not just a manually maintained list.
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly safety regression check after this workflow is merged to main.
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pac-baseline-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inherited-security-tests:
+    name: PAC security regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 10
+    env:
+      NODE_ENV: test
+      OTTER_STRICT_WORKSPACE: "true"
+      OTTER_FULL_ACCESS: "false"
+      OTTER_TELEMETRY: "off"
+      NO_TUNNEL: "true"
+    steps:
+      - name: Checkout repository (no persistent credential)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      - name: Install pinned dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Run inherited baseline tests (not PAC security certification)
+        run: bun test tests/security.test.ts tests/oauth-security.test.ts tests/oauth.test.ts tests/pac-privacy.test.ts tests/pac-terminal-safety.test.ts tests/pac-restricted-task-engine.test.ts tests/pac-policy-check.test.ts tests/pac-permission-boundary.test.ts
+
+      - name: Enforce PAC security policy guardrails
+        run: bun scripts/pac-policy-check.ts
+
+      - name: Bundle restricted read-only engine (compile smoke)
+        run: bun build ./src/daemon/pac-restricted-task-engine.ts --target=bun --outfile pac-restricted-smoke.js
+
+      - name: Bundle daemon entrypoint (compile smoke; do not execute)
+        run: bun build ./src/daemon/index.ts --target=bun --outfile pac-daemon-smoke.js

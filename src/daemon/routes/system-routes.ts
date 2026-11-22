@@ -14,29 +14,9 @@ import { EMBEDDED_DASHBOARD_ASSETS } from "../dashboard-assets.generated";
 import { OTTER_VERSION } from "../version";
 
 export async function handleSystemRoutes(req: Request, url: URL, port: number): Promise<Response | null> {
-  // -1. Public Health Check Endpoint
+  // PAC public health reveals no machine, network or connected-account details.
   if ((url.pathname === "/health" || url.pathname === "/api/health") && req.method === "GET") {
-    const tunnel = getQuickTunnelStatus();
-    const tailscaleIp = getTailscaleIp();
-    const { getExternalServersState } = await import("../mcp-gateway");
-    const { getSocialBotStatus } = await import("../social-bot");
-    const ext = getExternalServersState();
-    const social = getSocialBotStatus();
-    return jsonResponse({
-      status: "ok",
-      service: "otter-daemon",
-      version: OTTER_VERSION,
-      platform: process.platform,
-      uptime: Math.round(process.uptime()),
-      port,
-      tailscaleIp: tailscaleIp || null,
-      tunnelStatus: tunnel.status,
-      socialBotConnected: social.connected,
-      externalMcpServers: {
-        total: ext.length,
-        connected: ext.filter((s) => s.status === "connected").length,
-      },
-    }, 200, {}, req);
+    return jsonResponse({ status: "ok" }, 200, {}, req);
   }
 
   // 0. Trạng thái mã nguồn mở & đồng bộ tài khoản người dùng hoạt động
@@ -113,52 +93,17 @@ export async function handleSystemRoutes(req: Request, url: URL, port: number): 
     return jsonResponse({ success, status: getQuickTunnelStatus() });
   }
 
-  // 0.2 Quản lý quyền truy cập Full Access (Cho phép tạo dự án và truy cập file tự do)
+  // PAC: remote API requests cannot grant additional filesystem authority.
+  // Workspace selection must move to an OS-local, independently approved UI.
   if (url.pathname === "/api/system/security/full-access" && req.method === "GET") {
-    return jsonResponse({
-      fullAccess: isFullAccessEnabled(),
-      workspaces: getAllowedWorkspaces(),
-      homeDir: os.homedir()
-    });
+    return jsonResponse({ fullAccess: false, message: "Full Access is unavailable in PAC" });
   }
-
   if (url.pathname === "/api/system/security/full-access" && req.method === "POST") {
-    let body: any = {};
-    try { body = await req.json(); } catch {}
-    const enabled = Boolean(body?.enabled ?? true);
-    setFullAccess(enabled, true);
-    return jsonResponse({
-      success: true,
-      fullAccess: isFullAccessEnabled(),
-      workspaces: getAllowedWorkspaces(),
-      message: enabled
-        ? "Đã bật chế độ Full Access (Cho phép truy cập toàn bộ tệp tin và tạo dự án tự do trên máy tính)"
-        : "Đã tắt chế độ Full Access (Chỉ cho phép truy cập các workspace an toàn)"
-    });
+    return errorResponse("PAC forbids granting Full Access over HTTP", 403);
   }
-
-  // 1. Native Folder Picker
-  if (matchDaemonRoute(url.pathname, "SYS_FOLDER_PICKER") && req.method === "POST") {
-    let body: any = {};
-    try { body = await req.json(); } catch {}
-    const res = await openFolderPicker(body.initialPath);
-    if (res.path) {
-      registerAllowedWorkspace(res.path);
-    }
-    return jsonResponse(res);
-  }
-
-  // 2. Native File Picker
-  if (matchDaemonRoute(url.pathname, "SYS_FILE_PICKER") && req.method === "POST") {
-    let body: any = {};
-    try { body = await req.json(); } catch {}
-    const res = await openFilePicker(body.initialPath, body.multiple ?? true);
-    if (res.paths && res.paths.length > 0) {
-      for (const f of res.paths) {
-        registerAllowedWorkspace(path.dirname(f));
-      }
-    }
-    return jsonResponse(res);
+  if ((matchDaemonRoute(url.pathname, "SYS_FOLDER_PICKER") ||
+       matchDaemonRoute(url.pathname, "SYS_FILE_PICKER")) && req.method === "POST") {
+    return errorResponse("Remote workspace registration is disabled pending local owner approval", 403);
   }
 
   // 3. OpenAPI Specification

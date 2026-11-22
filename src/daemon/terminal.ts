@@ -1,4 +1,3 @@
-import { spawn } from "bun";
 import * as path from "node:path";
 import { resolveVpsEngine } from "./vps";
 
@@ -52,78 +51,31 @@ export function getLatestActiveSession(): TerminalSession | undefined {
   return all.length > 0 ? all[all.length - 1] : undefined;
 }
 
+/**
+ * PAC security boundary: legacy persistent shell sessions are inert.
+ * The imported Otter terminal must not spawn a process until a separate
+ * restricted subprocess worker with an approval policy is implemented.
+ */
 export function createTerminalSession(
   conversationId: string,
-  customCmd?: string[],
-  initialBanner?: string
+  _customCmd?: string[],
+  _initialBanner?: string
 ): TerminalSession {
   const id = crypto.randomUUID();
-  const isWindows = process.platform === "win32";
-  const defaultShell = isWindows
-    ? ["powershell.exe", "-NoProfile", "-NoLogo"]
-    : [process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"), "-l"];
-  const shellCmd = customCmd || defaultShell;
-
   const session: TerminalSession = {
     id,
     conversationId,
-    shell: shellCmd.join(" "),
+    shell: "PAC legacy shell disabled",
     busy: false,
-    inputAllowed: true,
+    inputAllowed: false,
     closed: false,
-    events: [
-      {
-        sequence: 1,
-        data: initialBanner || `\x1b[32m[Otter Persistent Terminal Ready]\x1b[0m\r\nType commands or let AI execute tasks.\r\n`,
-        encoding: "utf-8"
-      }
-    ],
+    events: [{
+      sequence: 1,
+      data: "[PAC] Legacy terminal is disabled pending a restricted execution worker.\\r\\n",
+      encoding: "utf-8"
+    }],
     waiters: []
   };
-
-  try {
-    const proc = spawn({
-      cmd: shellCmd,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe"
-    });
-    session.proc = proc;
-
-    // Stream stdout vào terminal buffer
-    (async () => {
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          appendTerminalOutput(id, decoder.decode(value));
-        }
-      } catch {}
-    })();
-
-    // Stream stderr vào terminal buffer
-    (async () => {
-      const reader = proc.stderr.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          appendTerminalOutput(id, decoder.decode(value));
-        }
-      } catch {}
-    })();
-
-    proc.exited.then((code) => {
-      session.closed = true;
-      appendTerminalOutput(id, `\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`);
-    });
-  } catch (err: any) {
-    appendTerminalOutput(id, `\r\n\x1b[31m[Error spawning shell: ${err.message}]\x1b[0m\r\n`);
-  }
-
   sessions.set(id, session);
   return session;
 }
@@ -239,7 +191,7 @@ export async function readTerminalOutput(
 
 export async function sendTerminalInput(sessionId: string, text: string): Promise<boolean> {
   const session = sessions.get(sessionId);
-  if (!session || session.closed) return false;
+  if (!session || session.closed || !session.inputAllowed) return false;
 
   // Nếu session có tiến trình sống (persistent process), ghi trực tiếp vào stdin
   if (session.proc && session.proc.stdin) {
@@ -274,25 +226,18 @@ export async function sendTerminalInput(sessionId: string, text: string): Promis
   return true;
 }
 
+/**
+ * All legacy direct-command callers (MCP, REST, TTS, render and terminal
+ * input fallback) converge here. Deny them until PAC has a separate,
+ * OS-sandboxed allowlist executor. No shell is launched.
+ */
 export async function executeCommand(
-  cmd: string,
-  cwd?: string
+  _cmd: string,
+  _cwd?: string
 ): Promise<TerminalExecutionResult> {
-  const isWindows = process.platform === "win32";
-  const shell = isWindows
-    ? ["powershell.exe", "-NoProfile", "-Command", cmd]
-    : [process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"), "-c", cmd];
-
-  const proc = spawn({
-    cmd: shell,
-    cwd: cwd || process.cwd(),
-    stdout: "pipe",
-    stderr: "pipe"
-  });
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-
-  return { stdout, stderr, exitCode };
+  return {
+    stdout: "",
+    stderr: "PAC policy: arbitrary terminal commands are disabled",
+    exitCode: 126
+  };
 }

@@ -41,7 +41,7 @@ import {
   matchDaemonRoutePrefix
 } from "./routes";
 import { startScheduledTaskRunner } from "./scheduled-tasks";
-import { startTelemetryHeartbeat } from "./telemetry";
+// PAC: no vendor telemetry at startup.
 
 const cliArg = process.argv[2];
 
@@ -72,136 +72,11 @@ if (cliArg === "license" || cliArg === "license:activate" || cliArg === "license
   process.exit(0);
 }
 
+// PAC: reject the imported direct CUA CLI bridge before any native binary is started.
+// Computer use will be restored only through an isolated, allowlisted worker.
 if (cliArg === "cua" || cliArg === "cua-driver") {
-  const sub = process.argv[3];
-  const { findCuaDriverExe, executeCuaTool, getCuaToolList } = await import("./desktop");
-  const { spawn } = await import("bun");
-
-  try {
-    const driverExe = await findCuaDriverExe();
-
-    if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-      console.log(`
-🖱️ Otter CUA CLI — Computer-Use Agent Controller (trycua/cua)
-
-Cú pháp:
-  otter cua serve [--no-overlay]            Khởi động CUA Daemon
-  otter cua call <toolName> [json_args]     Gọi trực tiếp công cụ CUA bất kỳ
-  otter cua status                          Kiểm tra trạng thái CUA Daemon & Named Pipe
-  otter cua stop                            Dừng CUA Daemon đang chạy
-  otter cua list [query]                    Liệt kê các công cụ CUA khả dụng
-  otter cua autostart [enable|disable]      Cài đặt tự khởi động CUA cùng hệ thống
-  otter cua doctor                          Kiểm tra chẩn đoán quyền & hệ thống CUA
-
-Ví dụ lệnh thực tế:
-  otter cua call get_screen_size
-  otter cua call get_cursor_position
-  otter cua call check_permissions
-  otter cua call list_windows
-  otter cua call click '{"x": 500, "y": 300}'
-  echo '{"x": 500, "y": 300}' | otter cua call click --stdin
-  otter cua call type_text '{"text": "Xin chao Otter"}'
-  otter cua call hotkey '{"keys": ["ctrl", "c"]}'
-`);
-      process.exit(0);
-    }
-
-    if (sub === "serve") {
-      const extraArgs = process.argv.slice(4);
-      console.log(`[*] Đang khởi động CUA Daemon (${driverExe})...`);
-      const proc = spawn({
-        cmd: [driverExe, "serve", ...extraArgs],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "inherit"
-      });
-      await proc.exited;
-      process.exit(proc.exitCode || 0);
-    }
-
-    if (sub === "call") {
-      const toolName = process.argv[4];
-      if (!toolName) {
-        console.error("\x1b[31m[!] Thiếu tên công cụ CUA:\x1b[0m otter cua call <toolName> [jsonArgs]");
-        process.exit(1);
-      }
-      // Đọc JSON tham số theo thứ tự: argv → sửa JSON bị PowerShell nuốt
-      // dấu ngoặc kép (vd {x: 960, y: 540}) → stdin (pipe hoặc --stdin).
-      // PowerShell 5.1 nuốt dấu " quanh tên trường khi truyền tham số cho
-      // file exe, nên đường stdin là cách chắc chắn nhất trên Windows.
-      const parseJsonArg = (text: string): any => {
-        const t = text.trim();
-        if (!t) return {};
-        try {
-          return JSON.parse(t);
-        } catch {}
-        try {
-          // Thử unescape nếu shell truyền vào \" hoặc bọc trong dấu nháy kép ngoài
-          let cleaned = t.replace(/\\"/g, '"');
-          if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-            cleaned = cleaned.slice(1, -1);
-          }
-          return JSON.parse(cleaned);
-        } catch {}
-        // Thử sửa JSON bị nuốt dấu ngoặc kép quanh tên trường: {x: 1} -> {"x": 1}
-        const repaired = t.replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)(\s*:)/g, '$1"$2"$3');
-        return JSON.parse(repaired);
-      };
-      const readStdinJson = async (): Promise<any> => {
-        const text = await new Response(Bun.stdin).text();
-        return parseJsonArg(text);
-      };
-      let argsObj: any = {};
-      const rawArg = process.argv.slice(5).join(" ").trim();
-      try {
-        if (rawArg === "-" || rawArg === "--stdin") {
-          argsObj = await readStdinJson();
-        } else if (rawArg.startsWith("--stdin ")) {
-          argsObj = parseJsonArg(rawArg.slice("--stdin ".length));
-        } else if (rawArg) {
-          argsObj = parseJsonArg(rawArg);
-        }
-      } catch (e: any) {
-        console.error(`\x1b[31m[!] Tham số JSON không hợp lệ:\x1b[0m ${e.message}`);
-        console.error(`    Gợi ý: echo '{"x": 960, "y": 540}' | otter cua call ${toolName} --stdin`);
-        process.exit(1);
-      }
-      const res = await executeCuaTool(toolName, argsObj);
-      console.log(typeof res === "object" ? JSON.stringify(res, null, 2) : res);
-      process.exit(0);
-    }
-
-    if (sub === "list" || sub === "inventory") {
-      const q = process.argv[4] ? process.argv[4].toLowerCase() : "";
-      const tools = await getCuaToolList();
-      const filtered = q
-        ? tools.filter((t: any) => (t.name && t.name.toLowerCase().includes(q)) || (t.description && t.description.toLowerCase().includes(q)))
-        : tools;
-      console.log(`\n📦 Tìm thấy ${filtered.length} công cụ CUA${q ? ` khớp với '${q}'` : ""}:\n`);
-      for (const t of filtered) {
-        console.log(`  • \x1b[36m${t.name || t.id}\x1b[0m`);
-        const firstLine = (t.description || "").split("\n")[0];
-        if (firstLine) console.log(`    ${firstLine.slice(0, 100)}...`);
-      }
-      console.log("");
-      process.exit(0);
-    }
-
-    // Default: forward directly to cua-driver (status, stop, autostart, doctor, permissions, etc.)
-    const restArgs = process.argv.slice(3);
-    const proc = spawn({
-      cmd: [driverExe, ...restArgs],
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit"
-    });
-    await proc.exited;
-    process.exit(proc.exitCode || 0);
-
-  } catch (err: any) {
-    console.error(`\x1b[31m[!] Lỗi CUA CLI:\x1b[0m ${err.message}`);
-    process.exit(1);
-  }
+  console.error("[PAC] Direct CUA commands are disabled pending sandboxed worker approval.");
+  process.exit(126);
 }
 
 const PORT = Number(process.env.PORT || 1993);
@@ -393,45 +268,32 @@ onExternalServersReloaded(() => {
   });
 });
 
+// PAC defaults to loopback even when the machine has a LAN interface.
+// Explicit remote access requires a separately reviewed architecture.
+ensureAuthToken();
 const server = Bun.serve<WsClientData>({
+  hostname: "127.0.0.1",
   port: PORT,
   idleTimeout: 255, // Cho phép tác vụ AI chạy ngầm (Muse video/code) lên tới hơn 4 phút không bị timeout
   async fetch(req, server) {
     const url = new URL(req.url);
-    console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
+    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // 1. CORS Preflight
     const preflight = handleCorsPreflight(req);
     if (preflight) return preflight;
 
-    // 2. Kiểm tra xác thực (Local/LAN/Tailscale miễn trừ khi chưa đặt OTTER_API_KEY;
-    //    truy cập từ Internet qua Cloudflare Tunnel BẮT BUỘC phải có Bearer token!)
-    const isPublicPath = url.pathname === "/" ||
-      url.pathname === "/health" ||
-      url.pathname === "/api/health" ||
-      url.pathname === "/activity" ||
-      url.pathname === "/dashboard" ||
-      url.pathname.startsWith("/dashboard/assets/") ||
-      url.pathname === "/dashboard/favicon.svg" ||
-      url.pathname === "/dashboard/icons.svg" ||
-      url.pathname.startsWith("/storage/tasks/") ||
-      url.pathname === "/api/media/file" ||
-      url.pathname.startsWith("/storage/media/") ||
-      url.pathname === "/openapi.json" ||
-      matchDaemonRoute(url.pathname, "MCP_SERVERS") ||
-      matchDaemonRoute(url.pathname, "SYS_LICENSE") ||
-      matchDaemonRoute(url.pathname, "SYS_LICENSE_ACTIVATE") ||
-      matchDaemonRoute(url.pathname, "SYS_TUNNEL") ||
-      url.pathname.startsWith("/assets/") ||
-      url.pathname === "/.well-known/ai-plugin.json" ||
-      url.pathname === "/.well-known/agent-card.json" ||
-      url.pathname === "/.well-known/oauth-protected-resource" ||
-      url.pathname === "/.well-known/oauth-authorization-server" ||
-      url.pathname === "/.well-known/openid-configuration" ||
-      url.pathname === "/oauth/authorize" ||
-      url.pathname === "/oauth/token" ||
-      url.pathname === "/oauth/register";
-
+    // PAC hardening: only minimal health and OAuth discovery/token flow routes
+    // bypass the shared Bearer authentication gate. All file/media/dashboard,
+    // management and tool endpoints require an authenticated request.
+    const publicPaths = new Set([
+      "/health", "/api/health",
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/openid-configuration",
+      "/oauth/authorize", "/oauth/token", "/oauth/register"
+    ]);
+    const isPublicPath = publicPaths.has(url.pathname);
     if (!isPublicPath) {
       const clientIp = server.requestIP(req)?.address;
       const authErr = checkAuth(req, url, clientIp);
@@ -744,7 +606,7 @@ const server = Bun.serve<WsClientData>({
 console.log(`[+] 🔓 Giấy phép: Mã nguồn mở (MIT License) — Miễn phí & Toàn quyền sử dụng`);
 
 // Gửi nhịp hoạt động ẩn danh (hoặc gắn tài khoản Firebase nếu đã đăng nhập) mỗi 3 phút
-startTelemetryHeartbeat();
+// PAC: telemetry is disabled; no heartbeat is scheduled.
 
 console.log(`=======================================================`);
 console.log(`[+] 🦦 Otter Daemon running at http://127.0.0.1:${PORT}`);
@@ -819,7 +681,7 @@ import { startQuickTunnel } from "./tunnel";
 // Local spellings --tunnel / ENABLE_TUNNEL=true still accepted as explicit opt-in.
 const tunnelExplicitlyOn = process.argv.includes("--tunnel") || process.env.ENABLE_TUNNEL === "true";
 const tunnelDisabled = process.argv.includes("--no-tunnel") || process.env.NO_TUNNEL === "true";
-const shouldStartTunnel = tunnelExplicitlyOn || !tunnelDisabled;
+const shouldStartTunnel = tunnelExplicitlyOn && !tunnelDisabled;
 if (shouldStartTunnel) {
   // Đảm bảo ~/.otter/auth.token luôn tồn tại để bảo vệ các API nhạy cảm khi mở Tunnel công khai
   ensureAuthToken();
@@ -835,7 +697,7 @@ if (shouldStartTunnel) {
 // phiên bản mới (bản bắt buộc tự áp dụng; OTTER_AUTO_UPDATE=1 để tự áp dụng mọi bản).
 registerBeforeRestartHook(() => server.stop(true));
 cleanupAfterUpdate();
-startUpdateScheduler(handleMcpActivity);
+// PAC: no vendor update polling; updates require a reviewed release.
 
 // Nạp sẵn Otter Page-Agent Core vào các tab Chrome CDP nếu cổng CDP đang mở (không cần Extension)
 void cdpBridge.isAvailable().then((ok) => {

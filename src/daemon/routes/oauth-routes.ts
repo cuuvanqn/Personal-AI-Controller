@@ -10,7 +10,7 @@
  * - Rate limit cho /oauth/authorize (POST) và /oauth/token.
  */
 import * as crypto from "node:crypto";
-import { getAuthToken, isTrustedHostOrIp } from "../security";
+import { getAuthToken } from "../security";
 import { getCorsHeaders, jsonResponse } from "./common";
 import { matchDaemonRoute } from "./lcg-routes";
 import { allowLicenseRequest } from "../license/rate-limit";
@@ -78,15 +78,6 @@ function getClientIp(req: Request): string {
     req.headers.get("x-real-ip")?.trim() ||
     "unknown"
   );
-}
-
-/** Request đến từ mạng tin cậy (localhost/Tailscale/LAN) — cùng logic với isRequestAuthorized. */
-function isTrustedRequest(req: Request, url: URL): boolean {
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
-  const ip = getClientIp(req);
-  const isHostTrusted = isTrustedHostOrIp(host);
-  const isClientTrusted = ip !== "unknown" ? isTrustedHostOrIp(ip) : isHostTrusted;
-  return isHostTrusted && isClientTrusted;
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -171,8 +162,6 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
     const codeChallenge = url.searchParams.get("code_challenge") || undefined;
     const codeChallengeMethod = url.searchParams.get("code_challenge_method") || undefined;
     const scope = url.searchParams.get("scope") || "all";
-    const autoApprove = url.searchParams.get("auto_approve") === "1" || url.searchParams.get("auto_approve") === "true";
-
     if (!redirectUri) {
       return new Response("Missing redirect_uri parameter", { status: 400, headers: getCorsHeaders(req) });
     }
@@ -184,28 +173,9 @@ export async function handleOAuthRoutes(req: Request, url: URL): Promise<Respons
       });
     }
 
-    // auto_approve chỉ còn hiệu lực với request từ mạng tin cậy (localhost/Tailscale/LAN).
-    // Từ internet công khai bắt buộc qua consent + nhập Auth Token.
-    if (autoApprove && isTrustedRequest(req, url)) {
-      const code = "otter_code_" + crypto.randomBytes(20).toString("hex");
-      saveAuthCode({
-        code,
-        clientId,
-        redirectUri,
-        codeChallenge,
-        codeChallengeMethod,
-        state,
-        scope,
-        expiresAt: Date.now() + 10 * 60 * 1000 // 10 phút
-      });
-
-      const redirectUrl = new URL(redirectUri);
-      redirectUrl.searchParams.set("code", code);
-      if (state) redirectUrl.searchParams.set("state", state);
-      redirectUrl.searchParams.set("iss", origin);
-
-      return Response.redirect(redirectUrl.toString(), 302);
-    }
+    // PAC: GET requests must never mint an authorization code.
+    // A local IP, LAN address, forwarded header, or auto_approve parameter
+    // is not evidence of explicit user consent.
 
     // Hiển thị Consent Screen giao diện hiện đại
     const html = `<!doctype html>

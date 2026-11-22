@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as path from "node:path";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import {
   assertSafePath,
   registerAllowedWorkspace,
@@ -35,7 +37,7 @@ describe("Security & Hardening Tests", () => {
     expect(() => assertSafePath(subFile)).not.toThrow();
   });
 
-  it("allows access to any path when Full Access is enabled, and enforces restriction when disabled", () => {
+  it("does not grant unbounded paths through the legacy Full Access flag", () => {
     const outsidePath = path.resolve("..", "..", "..", "Windows", "System32", "drivers", "etc", "hosts");
 
     // 1. By default in tests, outsidePath is blocked
@@ -43,18 +45,30 @@ describe("Security & Hardening Tests", () => {
     expect(isFullAccessEnabled()).toBe(false);
     expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
 
-    // 2. Enable Full Access -> outsidePath is allowed
+    // 2. Legacy Full Access flag must never bypass the PAC workspace guard
     setFullAccess(true, false);
     expect(isFullAccessEnabled()).toBe(true);
     expect(getAllowedWorkspaces()).toContain("*");
-    expect(() => assertSafePath(outsidePath)).not.toThrow();
-    expect(assertSafePath(outsidePath)).toBe(outsidePath);
+    expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
 
     // 3. Disable Full Access -> outsidePath is blocked again
     setFullAccess(false, false);
     expect(isFullAccessEnabled()).toBe(false);
     expect(getAllowedWorkspaces()).not.toContain("*");
     expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
+  });
+
+  it("blocks a junction or symlink in the workspace pointing outside", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pac-outside-"));
+    const link = path.resolve("scratch", "pac-link-" + Math.random().toString(36).slice(2));
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    try {
+      fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+      expect(() => assertSafePath(path.join(link, "existing-or-new", "private.txt"))).toThrow(/Truy cập bị từ chối/);
+    } finally {
+      try { fs.unlinkSync(link); } catch {}
+      try { fs.rmSync(outside, { recursive: true, force: true }); } catch {}
+    }
   });
 
   it("strictly enforces token verification for external/tunnel hosts", () => {
@@ -84,22 +98,22 @@ describe("Security & Hardening Tests", () => {
     });
     expect(isRequestAuthorized(extReqValidHeader, new URL(extReqValidHeader.url))).toBe(true);
 
-    // 4. External request with correct query parameter token -> allowed
+    // 4. Query parameter token must be refused by PAC
     const extReqValidQuery = new Request("https://otter.example.com/api/activity/v1/stream?token=secret-token-abcdef123", {
       headers: { host: "otter.example.com" }
     });
-    expect(isRequestAuthorized(extReqValidQuery, new URL(extReqValidQuery.url))).toBe(true);
+    expect(isRequestAuthorized(extReqValidQuery, new URL(extReqValidQuery.url))).toBe(false);
 
     // Dọn dẹp token
     setAuthToken(null);
   });
 
-  it("allows localhost requests when no token configured, but protects when token is set", () => {
+  it("rejects localhost requests without a bearer token, even when not configured", () => {
     setAuthToken(null);
     const localReqNoToken = new Request("http://127.0.0.1:1993/api/bookmarks", {
       headers: { host: "127.0.0.1:1993" }
     });
-    expect(isRequestAuthorized(localReqNoToken, new URL(localReqNoToken.url))).toBe(true);
+    expect(isRequestAuthorized(localReqNoToken, new URL(localReqNoToken.url))).toBe(false);
 
     // Khi người dùng đặt token
     setAuthToken("my-super-secret-key");
@@ -113,6 +127,15 @@ describe("Security & Hardening Tests", () => {
     });
     expect(isRequestAuthorized(localReqWithToken, new URL(localReqWithToken.url))).toBe(true);
 
+    setAuthToken(null);
+  });
+
+  it("rejects API keys in query strings on public and local hosts", () => {
+    setAuthToken("test-pac-secret");
+    const localReq = new Request("http://127.0.0.1:1993/api/activity/v1/terminal/exec?token=test-pac-secret");
+    expect(isRequestAuthorized(localReq, new URL(localReq.url))).toBe(false);
+    const publicReq = new Request("https://public.example.org/mcp?token=test-pac-secret");
+    expect(isRequestAuthorized(publicReq, new URL(publicReq.url))).toBe(false);
     setAuthToken(null);
   });
 
@@ -190,14 +213,14 @@ describe("Security & Hardening Tests", () => {
     expect(isTrustedHostOrIp("ts.net.fake.com")).toBe(false);
   });
 
-  it("authorizes requests from Tailscale IP without token when no OTTER_API_KEY is configured", () => {
+  it("rejects tokenless Tailscale requests even on private networks", () => {
     setAuthToken(null);
     const tsReq = new Request("http://100.66.170.39:1993/api/bookmarks", {
       headers: { host: "100.66.170.39:1993" }
     });
     // Request from remote Tailscale client IP (both pure IPv4 and dual-stack IPv6-mapped IPv4)
-    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "100.111.68.103")).toBe(true);
-    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "::ffff:100.111.68.103")).toBe(true);
+    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "100.111.68.103")).toBe(false);
+    expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "::ffff:100.111.68.103")).toBe(false);
 
     // When client IP is external public IP, should be rejected without token
     expect(isRequestAuthorized(tsReq, new URL(tsReq.url), "203.0.113.1")).toBe(false);

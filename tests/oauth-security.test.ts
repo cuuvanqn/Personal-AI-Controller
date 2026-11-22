@@ -220,7 +220,15 @@ describe("OAuth security (bản sửa 2026-11-21)", () => {
   });
 
   afterAll(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    } catch (err: any) {
+      // Windows holds SQLite files open while the test process is alive.
+      // This CI runner is disposable; do not mask test assertions or
+      // suppress unrelated cleanup failures on other platforms.
+      if (process.platform !== "win32" || !["EBUSY", "EPERM"].includes(err?.code)) throw err;
+      console.warn("[OAuth test] Temporary SQLite directory is locked on Windows; runner cleanup will remove it.");
+    }
     // Khôi phục env để không làm bẩn các file test khác khi chạy chung suite.
     if (prevOtterHome === undefined) delete process.env.OTTER_HOME;
     else process.env.OTTER_HOME = prevOtterHome;
