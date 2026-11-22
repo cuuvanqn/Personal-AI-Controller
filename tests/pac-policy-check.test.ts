@@ -85,4 +85,12 @@ describe("PAC security automation guardrails", () => {
     expect(errors).toContain("Legacy desktop function missing deny guard: executeCuaTool");
   });
 
+  test("rejects a worker launcher that loses its lab-only gate", () => {
+    const original = good["src/worker/pac-worker-launcher.ts"];
+    const changed = original.replace("isLabWorkerEnabled(process.env)", "true");
+    expect(changed).not.toBe(original);
+    expect(checkPacPolicy({ ...good, "src/worker/pac-worker-launcher.ts": changed }))
+      .toContain("Worker must remain lab-gated and bounded while native OS sandbox is absent");
+  });
+
 });
