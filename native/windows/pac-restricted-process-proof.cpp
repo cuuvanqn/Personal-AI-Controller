@@ -31,6 +31,66 @@ static bool readAsCurrent(const wchar_t* file) {
   return h.h != INVALID_HANDLE_VALUE;
 }
 
+
+// Diagnostic preflight: tests actual restricted-token access before spawn.
+// Each reported item is a category only; never disclose machine paths.
+static bool probeAsRestricted(HANDLE token, const wchar_t* target, DWORD access,
+                               DWORD flags, const char* label) {
+  if (!ImpersonateLoggedOnUser(token)) {
+    std::cerr << "PAC_PREFLIGHT_FAILED: impersonation winerr=" << GetLastError() << "\n";
+    return false;
+  }
+  HANDLE h = CreateFileW(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, flags, nullptr);
+  const DWORD err = h == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+  if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+  const BOOL reverted = RevertToSelf();
+  if (!reverted) {
+    std::cerr << "PAC_PREFLIGHT_FAILED: revert winerr=" << GetLastError() << "\n";
+    return false;
+  }
+  std::cout << "PAC_PREFLIGHT_" << label << ": "
+            << (err == ERROR_SUCCESS ? "allowed" : "denied")
+            << " code=" << err << "\n";
+  return err == ERROR_SUCCESS;
+}
+
+
+static void probeDesktopAsRestricted(HANDLE restricted) {
+  wchar_t stationName[256] = {}, desktopName[256] = {};
+  DWORD bytes = 0;
+  const bool hasStation = !!GetUserObjectInformationW(GetProcessWindowStation(),
+    UOI_NAME, stationName, sizeof(stationName), &bytes);
+  const bool hasDesktop = !!GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),
+    UOI_NAME, desktopName, sizeof(desktopName), &bytes);
+  if (!hasStation || !hasDesktop) {
+    std::cout << "PAC_DESKTOP_PREFLIGHT: unavailable\n";
+    return;
+  }
+  if (!ImpersonateLoggedOnUser(restricted)) {
+    std::cout << "PAC_DESKTOP_PREFLIGHT: impersonation failed\n";
+    return;
+  }
+  HWINSTA station = OpenWindowStationW(stationName, FALSE, WINSTA_ALL_ACCESS);
+  const DWORD stationError = station ? 0 : GetLastError();
+  if (station) CloseWindowStation(station);
+  HDESK desk = OpenDesktopW(desktopName, 0, FALSE, STANDARD_RIGHTS_REQUIRED | 0x01FF);
+  const DWORD desktopError = desk ? 0 : GetLastError();
+  if (desk) CloseDesktop(desk);
+  RevertToSelf();
+  std::cout << "PAC_DESKTOP_PREFLIGHT:"
+            << " station_full_access_code=" << stationError
+            << " desktop_full_access_code=" << desktopError << "\n";
+}
+
+static std::wstring parentOf(const std::wstring& value) {
+  const auto pos = value.find_last_of(L"\\/");
+  if (pos == std::wstring::npos) return L"";
+  if (pos == 2 && value.size() > 2 && value[1] == L':') return value.substr(0, 3);
+  if (pos == 0) return value.substr(0, 1);
+  return value.substr(0, pos);
+}
+
 int wmain(int argc, wchar_t** argv) {
   if (argc == 3 && wcscmp(argv[1], L"--restricted-child") == 0) {
     SafeHandle currentToken;
@@ -71,14 +131,26 @@ int wmain(int argc, wchar_t** argv) {
   const std::wstring userSid(userSidRaw);
   LocalFree(userSidRaw);
 
-  BYTE worldSidBuffer[SECURITY_MAX_SID_SIZE] = {};
-  DWORD worldSize = sizeof(worldSidBuffer);
-  if (!CreateWellKnownSid(WinBuiltinUsersSid, nullptr, worldSidBuffer, &worldSize))
-    return fail("CreateWellKnownSid");
-  SID_AND_ATTRIBUTES world = { worldSidBuffer, 0 };
+  // Common Windows objects may grant any of: RESTRICTED CODE,
+  // Authenticated Users, Everyone or BUILTIN\Users. The restricted access
+  // check allows access via any restricting SID but still requires the
+  // normal token access check too. Owner-only sentinel matches none.
+  WELL_KNOWN_SID_TYPE types[4] = {
+    WinRestrictedCodeSid, WinAuthenticatedUserSid, WinWorldSid, WinBuiltinUsersSid
+  };
+  BYTE sidBuffers[4][SECURITY_MAX_SID_SIZE] = {};
+  SID_AND_ATTRIBUTES restrictSids[4] = {};
+  for (int i = 0; i < 4; ++i) {
+    DWORD size = SECURITY_MAX_SID_SIZE;
+    if (!CreateWellKnownSid(types[i], nullptr, sidBuffers[i], &size))
+      return fail("Create restricting SID");
+    restrictSids[i].Sid = sidBuffers[i];
+    restrictSids[i].Attributes = 0;
+  }
   SafeHandle restricted;
   if (!CreateRestrictedToken(currentToken.h, DISABLE_MAX_PRIVILEGE,
-                             0, nullptr, 0, nullptr, 1, &world, &restricted.h))
+                             0, nullptr, 0, nullptr, 4, restrictSids,
+                             &restricted.h))
     return fail("CreateRestrictedToken primary");
   if (!IsTokenRestricted(restricted.h)) return fail("primary token unrestricted");
 
@@ -90,7 +162,7 @@ int wmain(int argc, wchar_t** argv) {
   std::wstring sentinel(tmpName);
   if (!DeleteFileW(sentinel.c_str())) return fail("Delete temp placeholder");
 
-  // The owner can read; BUILTIN\\Users (the sole restricting SID) is not in DACL.
+  // The owner can read; Everyone (the sole restricting SID) is not in DACL.
   const std::wstring sentinelSddl = L"D:P(A;;GA;;;" + userSid + L")";
   PSECURITY_DESCRIPTOR sec = nullptr;
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -115,11 +187,25 @@ int wmain(int argc, wchar_t** argv) {
   wchar_t self[MAX_PATH] = {};
   DWORD selfSize = GetModuleFileNameW(nullptr, self, MAX_PATH);
   if (!selfSize || selfSize >= MAX_PATH) return fail("GetModuleFileName");
-  std::wstring staged = std::wstring(tmpName) + L".exe";
+  // Disposable hosted CI proof only. Stage the *fixed* signed-by-source
+  // probe in the existing Public Documents tree instead of modifying runner
+  // checkout/temporary parent-directory ACLs. Never adopt this public path
+  // for production binaries; a native broker needs an immutable private dir.
+  wchar_t windowsDir[MAX_PATH] = {};
+  UINT windowsSize = GetWindowsDirectoryW(windowsDir, MAX_PATH);
+  if (!windowsSize || windowsSize >= MAX_PATH) return fail("Windows root missing");
+  // Test-only staging under standard Windows Temp ACLs, never shipped or
+  // used as a production executable location.
+  std::wstring stageDir = std::wstring(windowsDir) + L"\\Temp";
+  wchar_t stageTemp[MAX_PATH] = {};
+  if (!GetTempFileNameW(stageDir.c_str(), L"pac", 0, stageTemp))
+    return fail("Public Documents test staging unavailable");
+  if (!DeleteFileW(stageTemp)) return fail("Public test placeholder removal");
+  std::wstring staged = std::wstring(stageTemp) + L".exe";
   // Stage a test-only copy with read/execute rights for the restricting SID.
   // BUILTIN\\Users also matches standard Windows library and folder ACLs.
   if (!CopyFileW(self, staged.c_str(), TRUE)) return fail("Copy test executable");
-  const std::wstring exeSddl = L"D:P(A;;GA;;;" + userSid + L")(A;;GRGX;;;BU)";
+  const std::wstring exeSddl = L"D:P(A;;GA;;;" + userSid + L")(A;;GRGX;;;WD)";
   PSECURITY_DESCRIPTOR exeSec = nullptr;
   if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
          exeSddl.c_str(), SDDL_REVISION_1, &exeSec, nullptr))
@@ -127,6 +213,31 @@ int wmain(int argc, wchar_t** argv) {
   const BOOL aclOk = SetFileSecurityW(staged.c_str(), DACL_SECURITY_INFORMATION, exeSec);
   LocalFree(exeSec);
   if (!aclOk) return fail("SetFileSecurity staged exe");
+
+  // Diagnose whether the restricted identity can traverse parent folders
+  // and read the fixed EXE. Granting EXE read alone is insufficient.
+  const bool exeAccess = probeAsRestricted(restricted.h, staged.c_str(), GENERIC_READ,
+                                           FILE_ATTRIBUTE_NORMAL, "STAGED_EXE");
+  std::wstring ancestor = parentOf(staged);
+  bool allParentsAccessible = true; // diagnostic; direct directory handle access differs from traverse bypass
+  for (int depth = 0; depth < 12 && !ancestor.empty(); ++depth) {
+    const std::string label = "PARENT_DEPTH_" + std::to_string(depth);
+    allParentsAccessible = probeAsRestricted(restricted.h, ancestor.c_str(), FILE_TRAVERSE,
+                      FILE_FLAG_BACKUP_SEMANTICS, label.c_str()) && allParentsAccessible;
+    const std::wstring next = parentOf(ancestor);
+    if (next == ancestor) break;
+    ancestor = next;
+  }
+  wchar_t systemDirectory[MAX_PATH] = {};
+  if (!GetSystemDirectoryW(systemDirectory, MAX_PATH)) return fail("GetSystemDirectory");
+  const bool workingAccess = probeAsRestricted(restricted.h, systemDirectory,
+                                               FILE_TRAVERSE, FILE_FLAG_BACKUP_SEMANTICS,
+                                               "SYSTEM_DIRECTORY");
+  probeDesktopAsRestricted(restricted.h);
+  if (!exeAccess || !workingAccess) {
+    SetLastError(ERROR_ACCESS_DENIED);
+    return fail("Restricted preflight access to exe or system workdir");
+  }
 
   SafeHandle job;
   job.h = CreateJobObjectW(nullptr, nullptr);
@@ -150,11 +261,23 @@ int wmain(int argc, wchar_t** argv) {
   commandLine.push_back(L'\0');
   // Critical: CreateProcessAsUserW with restricted token only. Never retry
   // with CreateProcessW/current owner token even if Windows reports 1314.
-  if (!CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
-                            nullptr, nullptr, FALSE,
-                            CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                            nullptr, nullptr, &start, &proc))
-    return fail("CreateProcessAsUser restricted token");
+  // Two documented Windows APIs, but only the *same verified restricted
+  // primary token*. Do NOT fall back to CreateProcessW / owner's identity.
+  BOOL started = CreateProcessAsUserW(restricted.h, staged.c_str(), commandLine.data(),
+                                     nullptr, nullptr, FALSE,
+                                     CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                                     nullptr, systemDirectory, &start, &proc);
+  if (!started) {
+    const DWORD firstError = GetLastError();
+    std::cerr << "PAC_DIAGNOSTIC_AS_USER_FAILED: code=" << firstError << "\n";
+    started = CreateProcessWithTokenW(restricted.h, 0, staged.c_str(), commandLine.data(),
+                                      CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                                      nullptr, systemDirectory, &start, &proc);
+    if (!started) return fail("Both restricted-token process APIs failed");
+    std::cout << "PAC_DIAGNOSTIC_ALTERNATE_API: CreateProcessWithTokenW\n";
+  } else {
+    std::cout << "PAC_DIAGNOSTIC_PRIMARY_API: CreateProcessAsUserW\n";
+  }
   SafeHandle childProcess;
   SafeHandle childThread;
   childProcess.h = proc.hProcess;
