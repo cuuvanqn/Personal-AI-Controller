@@ -2,7 +2,7 @@ name: PAC baseline checks
 
 on:
   pull_request:
-    branches: [main, pac/ci-security-baseline, pac/security-deny-by-default, pac/disable-vendor-egress, pac/oauth-consent-gate, pac/disable-legacy-shell, pac/workspace-symlink-guard, pac/restricted-task-engine]
+    # Every PR base branch is tested, not just a manually maintained list.
   push:
     branches: [main]
   workflow_dispatch:
@@ -47,7 +47,13 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Run inherited baseline tests (not PAC security certification)
-        run: bun test tests/security.test.ts tests/oauth-security.test.ts tests/oauth.test.ts tests/pac-privacy.test.ts tests/pac-terminal-safety.test.ts tests/pac-restricted-task-engine.test.ts tests/pac-policy-check.test.ts
+        run: bun test tests/security.test.ts tests/oauth-security.test.ts tests/oauth.test.ts tests/pac-privacy.test.ts tests/pac-terminal-safety.test.ts tests/pac-restricted-task-engine.test.ts tests/pac-policy-check.test.ts tests/pac-permission-boundary.test.ts
 
       - name: Enforce PAC security policy guardrails
         run: bun scripts/pac-policy-check.ts
+
+      - name: Bundle restricted read-only engine (compile smoke)
+        run: bun build ./src/daemon/pac-restricted-task-engine.ts --target=bun --outfile pac-restricted-smoke.js
+
+      - name: Bundle daemon entrypoint (compile smoke; do not execute)
+        run: bun build ./src/daemon/index.ts --target=bun --outfile pac-daemon-smoke.js
