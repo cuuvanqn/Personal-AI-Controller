@@ -88,8 +88,9 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          & ./labs/pac-worker-v0/PAC-Alpha-Lab.exe --self-test
-          if ($LASTEXITCODE -ne 0) { throw ('Alpha GUI IPC self-test failed: exit ' + $LASTEXITCODE) }
+          $exe = (Resolve-Path './labs/pac-worker-v0/PAC-Alpha-Lab.exe').Path
+          $process = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw ('Alpha GUI IPC self-test failed: exit ' + $process.ExitCode) }
           Write-Host 'PAC_ALPHA_GUI_SELFTEST_PASSED: compiled WinForms launcher + read-only worker'
 
       - name: Record reproducible Alpha artifact hashes
