@@ -74,14 +74,50 @@ jobs:
           & ./labs/pac-worker-v0/run-demo.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload lab-only Windows EXE (1 day)
+
+      - name: Compile native Windows Forms Alpha interface
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          if (!(Test-Path $compiler)) { throw 'Windows .NET Framework C# compiler unavailable' }
+          & $compiler /nologo /target:winexe /platform:x64 /out:labs/pac-worker-v0/PAC-Alpha-Lab.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll labs/pac-worker-v0/PAC-Alpha-Lab-GUI.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test compiled GUI launcher with real worker (no UI needed)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & ./labs/pac-worker-v0/PAC-Alpha-Lab.exe --self-test
+          if ($LASTEXITCODE -ne 0) { throw ('Alpha GUI IPC self-test failed: exit ' + $LASTEXITCODE) }
+          Write-Host 'PAC_ALPHA_GUI_SELFTEST_PASSED: compiled WinForms launcher + read-only worker'
+
+      - name: Record reproducible Alpha artifact hashes
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $dir = 'labs/pac-worker-v0'
+          $worker = (Get-FileHash (Join-Path $dir 'pac-worker-lab.exe') -Algorithm SHA256).Hash
+          $gui = (Get-FileHash (Join-Path $dir 'PAC-Alpha-Lab.exe') -Algorithm SHA256).Hash
+          @(
+            'PAC Alpha Lab v0.2 — unsigned, lab-only'
+            ('Commit: ' + $env:GITHUB_SHA)
+            ('SHA256 pac-worker-lab.exe: ' + $worker)
+            ('SHA256 PAC-Alpha-Lab.exe: ' + $gui)
+            'No OS sandbox, no personal file access'
+          ) | Set-Content -Path (Join-Path $dir 'BUILD-MANIFEST.txt') -Encoding utf8
+
+      - name: Upload unsigned Windows Alpha Lab preview (3 days)
         if: matrix.os == 'windows-latest' && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: pac-worker-lab-v0-windows
+          name: pac-alpha-lab-v02-windows
           path: |
             labs/pac-worker-v0/pac-worker-lab.exe
+            labs/pac-worker-v0/PAC-Alpha-Lab.exe
+            labs/pac-worker-v0/ALPHA-V02-README.md
+            labs/pac-worker-v0/BUILD-MANIFEST.txt
             labs/pac-worker-v0/run-demo.ps1
             labs/pac-worker-v0/README.md
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
