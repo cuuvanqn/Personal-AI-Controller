@@ -7,6 +7,11 @@ import * as os from "node:os";
 import * as fs from "node:fs/promises";
 import { executeCommand } from "./terminal";
 
+/** PAC RC0: no legacy direct native desktop access without OS-isolated approval. */
+export function denyLegacyDesktopAccess(): never {
+  throw new Error("PAC_DESKTOP_DENIED: legacy native desktop control is disabled until isolated worker approval");
+}
+
 export interface WindowInfo {
   pid: number;
   processName: string;
@@ -17,6 +22,7 @@ export interface WindowInfo {
  * Liệt kê tất cả các cửa sổ ứng dụng đang mở trên desktop (Windows & macOS)
  */
 export async function listWindows(): Promise<WindowInfo[]> {
+  denyLegacyDesktopAccess();
   const isWindows = process.platform === "win32";
   const isMac = process.platform === "darwin";
 
@@ -126,6 +132,7 @@ async function hasCommand(cmd: string): Promise<boolean> {
  * lượt grim (Wayland), gnome-screenshot, scrot, import (ImageMagick).
  */
 export async function takeScreenshot(outputPath?: string): Promise<{ filePath: string; width: number; height: number }> {
+  denyLegacyDesktopAccess();
   const targetPath = outputPath ? path.resolve(outputPath) : path.resolve(`screenshot_${Date.now()}.png`);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
@@ -265,6 +272,7 @@ async function exists(p: string): Promise<boolean> {
  * Di chuyển và click chuột tại toạ độ (x, y) (Windows & macOS)
  */
 export async function mouseAction(action: "left_click" | "right_click" | "double_click" | "move", x: number, y: number): Promise<string> {
+  denyLegacyDesktopAccess();
   const isWindows = process.platform === "win32";
   const isMac = process.platform === "darwin";
 
@@ -351,6 +359,7 @@ export async function mouseAction(action: "left_click" | "right_click" | "double
  * Gõ văn bản hoặc gửi phím tắt (Windows & macOS)
  */
 export async function keyboardAction(keys: string): Promise<string> {
+  denyLegacyDesktopAccess();
   const isWindows = process.platform === "win32";
   const isMac = process.platform === "darwin";
 
@@ -433,6 +442,7 @@ export async function keyboardAction(keys: string): Promise<string> {
  * Đọc danh mục công cụ CUA của OpenAI (nếu có driver sdk trong hệ thống hoặc bin/cua)
  */
 export async function getCuaToolList(): Promise<any[]> {
+  denyLegacyDesktopAccess();
   const ext = process.platform === "darwin" ? "dylib" : (process.platform === "win32" ? "dll" : "so");
   const fileName = `cua_driver_sdk.${ext}`;
   const exeDir = path.dirname(process.execPath);
@@ -516,6 +526,7 @@ export async function getCuaToolList(): Promise<any[]> {
  * Tìm đường dẫn file thực thi cua-driver trên hệ thống
  */
 export async function findCuaDriverExe(): Promise<string> {
+  denyLegacyDesktopAccess();
   const isWindows = process.platform === "win32";
   const ext = isWindows ? ".exe" : "";
   const exeDir = path.dirname(process.execPath);
@@ -543,6 +554,7 @@ export async function findCuaDriverExe(): Promise<string> {
  * Thực thi một công cụ CUA (Computer-Use Agent) từ trycua/cua
  */
 export async function executeCuaTool(toolName: string, args: Record<string, any> = {}): Promise<any> {
+  denyLegacyDesktopAccess();
   const driverExe = await findCuaDriverExe();
 
   // Đảm bảo daemon CUA đang chạy trên interactive desktop
