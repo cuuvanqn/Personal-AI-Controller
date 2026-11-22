@@ -87,6 +87,6 @@ jobs:
           if (!$vs) { throw 'Visual Studio unavailable' }
           $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
           if (!(Test-Path $vcvars)) { throw 'MSVC x64 tools unavailable' }
-          $command = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib && pac-restricted-process-proof.exe --ci-lab'
+          $command = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib user32.lib && pac-restricted-process-proof.exe --ci-lab'
           cmd.exe /d /s /c $command
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
