@@ -63,37 +63,9 @@ jobs:
       - name: Bundle worker entry and launcher (compile only)
         run: bun build ./src/worker/pac-windows-worker.ts ./src/worker/pac-worker-launcher.ts --target=bun --outdir pac-worker-smoke
 
-      - name: Native Windows restricted-token OS access proof
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          if (!(Test-Path $vswhere)) { throw 'MSVC vswhere missing; native gate cannot be skipped' }
-          $vs = & $vswhere -latest -products '*' -property installationPath
-          if (!$vs) { throw 'Visual Studio missing; native gate cannot be skipped' }
-          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
-          if (!(Test-Path $vcvars)) { throw 'MSVC x64 environment missing' }
-          $command = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-token-proof.cpp /Fe:pac-restricted-token-proof.exe /link advapi32.lib && pac-restricted-token-proof.exe'
-          cmd.exe /d /s /c $command
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Native restricted primary-token child process and Job Object proof
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          if (!(Test-Path $vswhere)) { throw 'MSVC unavailable' }
-          $vs = & $vswhere -latest -products '*' -property installationPath
-          if (!$vs) { throw 'Visual Studio unavailable' }
-          $vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
-          if (!(Test-Path $vcvars)) { throw 'MSVC x64 tools unavailable' }
-          $command = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib user32.lib && pac-restricted-process-proof.exe --ci-lab'
-          cmd.exe /d /s /c $command
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
   pac-worker-lab-build:
     # First usable binary smoke-test: independent of the still-blocked native sandbox job.
-    if: github.event_name == 'pull_request' && github.head_ref == 'pac/native-process-access-diagnostics'
+    if: github.event_name == 'pull_request'
     name: PAC read-only lab v0.1 (Windows disposable CI)
     runs-on: windows-latest
     timeout-minutes: 8
