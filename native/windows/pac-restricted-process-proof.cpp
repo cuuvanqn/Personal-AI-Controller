@@ -163,10 +163,12 @@ int wmain(int argc, wchar_t** argv) {
   // probe in the existing Public Documents tree instead of modifying runner
   // checkout/temporary parent-directory ACLs. Never adopt this public path
   // for production binaries; a native broker needs an immutable private dir.
-  wchar_t publicDir[MAX_PATH] = {};
-  DWORD publicSize = GetEnvironmentVariableW(L"PUBLIC", publicDir, MAX_PATH);
-  if (!publicSize || publicSize >= MAX_PATH) return fail("PUBLIC staging root missing");
-  std::wstring stageDir = std::wstring(publicDir) + L"\\Documents";
+  wchar_t windowsDir[MAX_PATH] = {};
+  UINT windowsSize = GetWindowsDirectoryW(windowsDir, MAX_PATH);
+  if (!windowsSize || windowsSize >= MAX_PATH) return fail("Windows root missing");
+  // Test-only staging under standard Windows Temp ACLs, never shipped or
+  // used as a production executable location.
+  std::wstring stageDir = std::wstring(windowsDir) + L"\\Temp";
   wchar_t stageTemp[MAX_PATH] = {};
   if (!GetTempFileNameW(stageDir.c_str(), L"pac", 0, stageTemp))
     return fail("Public Documents test staging unavailable");
