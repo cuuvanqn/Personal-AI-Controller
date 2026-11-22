@@ -1,18 +1,22 @@
-name: PAC security baseline
+name: PAC baseline checks
 
 on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pac-security-baseline-${{ github.ref }}
+  group: pac-baseline-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  security-tests:
-    name: Security unit tests (Bun)
+  inherited-security-tests:
+    name: Imported Otter security regression baseline
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -22,7 +26,7 @@ jobs:
       OTTER_TELEMETRY: "off"
       NO_TUNNEL: "true"
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (no persistent credential)
         uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -32,8 +36,8 @@ jobs:
         with:
           bun-version: "1.3.3"
 
-      - name: Install locked dependencies
+      - name: Install pinned dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Run security unit tests
+      - name: Run inherited baseline tests (not PAC security certification)
         run: bun test tests/security.test.ts tests/oauth-security.test.ts
