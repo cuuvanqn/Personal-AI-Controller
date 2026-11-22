@@ -90,3 +90,40 @@ jobs:
           $command = 'call "' + $vcvars + '" && cl /nologo /EHsc /std:c++17 native\\windows\\pac-restricted-process-proof.cpp /Fe:pac-restricted-process-proof.exe /link advapi32.lib user32.lib && pac-restricted-process-proof.exe --ci-lab'
           cmd.exe /d /s /c $command
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  pac-worker-lab-build:
+    # First usable binary smoke-test: independent of the still-blocked native sandbox job.
+    if: github.event_name == 'pull_request' && github.head_ref == 'pac/native-process-access-diagnostics'
+    name: PAC read-only lab v0.1 (Windows disposable CI)
+    runs-on: windows-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout reviewed PR source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Install fixed dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Compile offline read-only worker binary
+        run: bun build --compile ./src/worker/pac-windows-worker.ts --outfile ./labs/pac-worker-v0/pac-worker-lab.exe
+      - name: Verify packaged EXE with disposable workspace
+        shell: pwsh
+        run: |
+          & ./labs/pac-worker-v0/run-demo.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload lab-only artifact (short retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pac-worker-lab-v0-windows
+          path: |
+            labs/pac-worker-v0/pac-worker-lab.exe
+            labs/pac-worker-v0/run-demo.ps1
+            labs/pac-worker-v0/README.md
+          retention-days: 1
+          if-no-files-found: error
