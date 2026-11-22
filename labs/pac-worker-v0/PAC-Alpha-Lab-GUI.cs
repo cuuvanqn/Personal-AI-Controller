@@ -141,7 +141,18 @@ internal sealed class LabForm : Form
         Icon = SystemIcons.Shield;
 
         var header = new Panel { Dock = DockStyle.Top, Height = 112, BackColor = Color.FromArgb(25, 57, 102) };
-        Controls.Add(header);
+        var frame = new TableLayoutPanel {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4,
+            Margin = Padding.Empty, Padding = Padding.Empty
+        };
+        frame.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+        frame.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        frame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        frame.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        Controls.Add(frame);
+        header.Dock = DockStyle.Fill;
+        frame.Controls.Add(header, 0, 0);
         header.Controls.Add(new Label {
             Text = "PAC  ·  ALPHA LAB v0.2", ForeColor = Color.White, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
             AutoSize = true, Location = new Point(24, 14)
@@ -158,11 +169,12 @@ internal sealed class LabForm : Form
             ForeColor = Color.FromArgb(129, 81, 9), BackColor = Color.FromArgb(255, 245, 217),
             TextAlign = ContentAlignment.MiddleCenter
         };
-        Controls.Add(note);
-        note.BringToFront();
+        note.Dock = DockStyle.Fill;
+        frame.Controls.Add(note, 0, 1);
 
         var bottom = new Panel { Dock = DockStyle.Bottom, Height = 66, BackColor = Color.White };
-        Controls.Add(bottom);
+        bottom.Dock = DockStyle.Fill;
+        frame.Controls.Add(bottom, 0, 3);
         status = new Label {
             Text = "● Sẵn sàng — chưa có tác vụ", Location = new Point(24, 20), AutoSize = true,
             ForeColor = Color.FromArgb(34, 115, 84), Font = new Font("Segoe UI", 10F, FontStyle.Bold)
@@ -175,7 +187,16 @@ internal sealed class LabForm : Form
         bottom.Resize += delegate { close.Left = bottom.ClientSize.Width - 124; };
 
         var left = new Panel { Dock = DockStyle.Left, Width = 245, Padding = new Padding(18) };
-        Controls.Add(left);
+        var body = new TableLayoutPanel {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            Padding = Padding.Empty, Margin = Padding.Empty
+        };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 245));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        frame.Controls.Add(body, 0, 2);
+        left.Dock = DockStyle.Fill;
+        body.Controls.Add(left, 0, 0);
         left.Controls.Add(new Label {
             Text = "TÁC VỤ MẪU", Font = new Font("Segoe UI", 11F, FontStyle.Bold),
             ForeColor = Color.FromArgb(31, 51, 78), Location = new Point(20, 18), AutoSize = true
@@ -202,8 +223,8 @@ internal sealed class LabForm : Form
         });
 
         var content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16, 20, 23, 18) };
-        Controls.Add(content);
-        content.BringToFront();
+        content.Dock = DockStyle.Fill;
+        body.Controls.Add(content, 1, 0);
         var contentTitle = new Label {
             Dock = DockStyle.Top, Height = 38, Text = "Kết quả thực hiện",
             Font = new Font("Segoe UI", 14F, FontStyle.Bold), ForeColor = Color.FromArgb(31, 51, 78)
