@@ -255,6 +255,18 @@ int wmain(int argc, wchar_t** argv) {
 
   STARTUPINFOW start = {};
   start.cb = sizeof(start);
+  // CI experiment: bind the exact window station/desktop whose full
+  // access was checked under the same restricted token. No DACL edits.
+  wchar_t stationForChild[256] = {}, desktopForChild[256] = {};
+  DWORD objectBytes = 0;
+  if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
+                                  stationForChild, sizeof(stationForChild), &objectBytes)
+      || !GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME,
+                                    desktopForChild, sizeof(desktopForChild), &objectBytes))
+    return fail("Read current window station/desktop");
+  std::wstring childDesktop = std::wstring(stationForChild) + L"\\" + desktopForChild;
+  start.lpDesktop = childDesktop.data();
+  std::cout << "PAC_STARTUP_DESKTOP_DIAGNOSTIC: explicitly_selected=true\n";
   PROCESS_INFORMATION proc = {};
   std::wstring args = L"\"" + staged + L"\" --restricted-child \"" + sentinel + L"\"";
   std::vector<wchar_t> commandLine(args.begin(), args.end());
