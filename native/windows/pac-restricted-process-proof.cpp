@@ -147,7 +147,19 @@ int wmain(int argc, wchar_t** argv) {
   wchar_t self[MAX_PATH] = {};
   DWORD selfSize = GetModuleFileNameW(nullptr, self, MAX_PATH);
   if (!selfSize || selfSize >= MAX_PATH) return fail("GetModuleFileName");
-  std::wstring staged = std::wstring(tmpName) + L".exe";
+  // Disposable hosted CI proof only. Stage the *fixed* signed-by-source
+  // probe in the existing Public Documents tree instead of modifying runner
+  // checkout/temporary parent-directory ACLs. Never adopt this public path
+  // for production binaries; a native broker needs an immutable private dir.
+  wchar_t publicDir[MAX_PATH] = {};
+  DWORD publicSize = GetEnvironmentVariableW(L"PUBLIC", publicDir, MAX_PATH);
+  if (!publicSize || publicSize >= MAX_PATH) return fail("PUBLIC staging root missing");
+  std::wstring stageDir = std::wstring(publicDir) + L"\\Documents";
+  wchar_t stageTemp[MAX_PATH] = {};
+  if (!GetTempFileNameW(stageDir.c_str(), L"pac", 0, stageTemp))
+    return fail("Public Documents test staging unavailable");
+  if (!DeleteFileW(stageTemp)) return fail("Public test placeholder removal");
+  std::wstring staged = std::wstring(stageTemp) + L".exe";
   // Stage a test-only copy with read/execute rights for the restricting SID.
   // BUILTIN\\Users also matches standard Windows library and folder ACLs.
   if (!CopyFileW(self, staged.c_str(), TRUE)) return fail("Copy test executable");
@@ -165,10 +177,11 @@ int wmain(int argc, wchar_t** argv) {
   const bool exeAccess = probeAsRestricted(restricted.h, staged.c_str(), GENERIC_READ,
                                            FILE_ATTRIBUTE_NORMAL, "STAGED_EXE");
   std::wstring ancestor = parentOf(staged);
+  bool allParentsAccessible = true;
   for (int depth = 0; depth < 12 && !ancestor.empty(); ++depth) {
     const std::string label = "PARENT_DEPTH_" + std::to_string(depth);
-    probeAsRestricted(restricted.h, ancestor.c_str(), FILE_TRAVERSE,
-                      FILE_FLAG_BACKUP_SEMANTICS, label.c_str());
+    allParentsAccessible = probeAsRestricted(restricted.h, ancestor.c_str(), FILE_TRAVERSE,
+                      FILE_FLAG_BACKUP_SEMANTICS, label.c_str()) && allParentsAccessible;
     const std::wstring next = parentOf(ancestor);
     if (next == ancestor) break;
     ancestor = next;
@@ -178,7 +191,7 @@ int wmain(int argc, wchar_t** argv) {
   const bool workingAccess = probeAsRestricted(restricted.h, systemDirectory,
                                                FILE_TRAVERSE, FILE_FLAG_BACKUP_SEMANTICS,
                                                "SYSTEM_DIRECTORY");
-  if (!exeAccess || !workingAccess) {
+  if (!exeAccess || !workingAccess || !allParentsAccessible) {
     SetLastError(ERROR_ACCESS_DENIED);
     return fail("Restricted preflight access to exe or system workdir");
   }
