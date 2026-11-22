@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as path from "node:path";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import {
   assertSafePath,
   registerAllowedWorkspace,
@@ -35,7 +37,7 @@ describe("Security & Hardening Tests", () => {
     expect(() => assertSafePath(subFile)).not.toThrow();
   });
 
-  it("allows access to any path when Full Access is enabled, and enforces restriction when disabled", () => {
+  it("does not grant unbounded paths through the legacy Full Access flag", () => {
     const outsidePath = path.resolve("..", "..", "..", "Windows", "System32", "drivers", "etc", "hosts");
 
     // 1. By default in tests, outsidePath is blocked
@@ -43,18 +45,30 @@ describe("Security & Hardening Tests", () => {
     expect(isFullAccessEnabled()).toBe(false);
     expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
 
-    // 2. Enable Full Access -> outsidePath is allowed
+    // 2. Legacy Full Access flag must never bypass the PAC workspace guard
     setFullAccess(true, false);
     expect(isFullAccessEnabled()).toBe(true);
     expect(getAllowedWorkspaces()).toContain("*");
-    expect(() => assertSafePath(outsidePath)).not.toThrow();
-    expect(assertSafePath(outsidePath)).toBe(outsidePath);
+    expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
 
     // 3. Disable Full Access -> outsidePath is blocked again
     setFullAccess(false, false);
     expect(isFullAccessEnabled()).toBe(false);
     expect(getAllowedWorkspaces()).not.toContain("*");
     expect(() => assertSafePath(outsidePath)).toThrow(/Truy cập bị từ chối/);
+  });
+
+  it("blocks a junction or symlink in the workspace pointing outside", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pac-outside-"));
+    const link = path.resolve("scratch", "pac-link-" + Math.random().toString(36).slice(2));
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    try {
+      fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+      expect(() => assertSafePath(path.join(link, "existing-or-new", "private.txt"))).toThrow(/Truy cập bị từ chối/);
+    } finally {
+      try { fs.unlinkSync(link); } catch {}
+      try { fs.rmSync(outside, { recursive: true, force: true }); } catch {}
+    }
   });
 
   it("strictly enforces token verification for external/tunnel hosts", () => {
