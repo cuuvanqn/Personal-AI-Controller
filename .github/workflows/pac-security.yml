@@ -74,6 +74,21 @@ jobs:
           & ./labs/pac-worker-v0/run-demo.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Validate Windows GUI PowerShell syntax without opening a desktop
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './labs/pac-worker-v0/pac-alpha-ui.ps1').Path,
+            [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) {
+            foreach ($e in $errors) { Write-Error $e.Message }
+            exit 1
+          }
+          Write-Host 'PAC_ALPHA_UI_SYNTAX_PASSED'
+
       - name: Upload lab-only Windows EXE (1 day)
         if: matrix.os == 'windows-latest' && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
@@ -83,5 +98,7 @@ jobs:
             labs/pac-worker-v0/pac-worker-lab.exe
             labs/pac-worker-v0/run-demo.ps1
             labs/pac-worker-v0/README.md
+            labs/pac-worker-v0/pac-alpha-ui.ps1
+            labs/pac-worker-v0/MO-PAC-ALPHA.cmd
           retention-days: 1
           if-no-files-found: error
