@@ -422,6 +422,6 @@ int wmain(int argc, wchar_t** argv) {
     std::cout << "PAC_APPCONTAINER_PROOF_PASSED: restricted_process=true"
               << " allowed_fixture=true owner_only_denied=true"
               << " capabilities=0 job_object=true network_loopback_blocked=true"
-              << " (socket_denied_or_WFP_drop_with_missing_capability)\n";
+              << " (socket_denied_or_timeout_with_live_listener_controls)\n";
     return 0;
 }
