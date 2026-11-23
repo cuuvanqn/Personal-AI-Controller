@@ -5,6 +5,12 @@ on:
       - 'native/windows/**'
       - '.github/workflows/pac-native-sandbox-experimental.yml'
   workflow_dispatch:
+    inputs:
+      run_legacy_restricted_token:
+        description: "Run the known-failing, unused restricted-token backend for diagnostics"
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -15,7 +21,10 @@ concurrency:
 
 jobs:
   native-restricted-process:
-    name: Windows native restricted-process proof (must pass before release)
+    # This superseded alternative is not used by PAC Alpha v0.3. Preserve a
+    # manually invocable diagnostic rather than concealing/removing the failure.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_legacy_restricted_token
+    name: Legacy restricted-token diagnostic (manual; not production backend)
     runs-on: windows-latest
     timeout-minutes: 8
     steps:
