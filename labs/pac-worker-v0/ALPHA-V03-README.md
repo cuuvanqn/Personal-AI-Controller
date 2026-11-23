@@ -38,7 +38,7 @@ The CI integration aims to prove:
 
 The following **remain unverified** and BLOCK real user-data support:
 - Windows 11 Home on an independent local machine (GitHub-hosted runner is not that test).
-- Independent network-denial test for the Bun process.
+- Full independent egress-denial verification for the Bun process (IPv4/IPv6, external TCP, UDP and DNS). A separate native AppContainer probe now verifies **one** host-loopback TCP connection cannot be established against a listener reachable by the owner both before and after. A timeout is observational non-connectivity, not identified WFP filter attribution.
 - Application signing, immutable installation directory, secure updater and uninstall/profile cleanup after power loss or force-kill.
 - Arbitrary user-selected workspaces with reliable Windows-native no-reparse-point / file-handle containment and race defense.
 - Audited authenticated IPC for non-lab tasks and permissions/consent UI.
@@ -56,4 +56,6 @@ No direct worker fallback. No local HTTP service. No remote endpoint. No admin r
 
 ## Development
 
-Source and CI tests are in Draft PRs. The previous restricted primary-token backend still returns Win32 error 5 on hosted runners; it is a separate experimental alternative and must not be silently used if AppContainer fails.
+Source and CI tests are in Draft PRs. The previous restricted primary-token backend still returns Win32 error 5 on hosted runners. It is retained as an explicitly triggered **legacy diagnostic only** and is never a fallback if AppContainer fails. See `docs/PAC_ADR_003_APPCONTAINER_ALPHA_BACKEND.md`.
+
+The GUI now limits the native broker's stdout to 32 KiB **while it is being read** rather than buffering an arbitrary amount before validation. This is defense-in-depth for a broken broker; it does not grant new capabilities.

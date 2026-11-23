@@ -42,6 +42,25 @@ internal static class LabWorker
         return parsed;
     }
 
+    // The native broker is a separate process. A corrupted broker could flood
+    // stdout; never allocate an unbounded string before checking its size.
+    private static string ReadBrokerOutputBounded(Process process)
+    {
+        var buffer = new char[2048];
+        var result = new StringBuilder();
+        while (true)
+        {
+            int read = process.StandardOutput.Read(buffer, 0, buffer.Length);
+            if (read == 0) return result.ToString();
+            if (result.Length + read > 32768)
+            {
+                try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) {}
+                throw new InvalidOperationException("Phan hoi vuot gioi han 32 KiB.");
+            }
+            result.Append(buffer, 0, read);
+        }
+    }
+
     internal static string Call(string workspace, string json, Action<Process> started)
     {
         if (!File.Exists(WorkerPath))
@@ -85,7 +104,7 @@ internal static class LabWorker
             if (started != null) started(process);
             try
             {
-                Task<string> output = process.StandardOutput.ReadToEndAsync();
+                Task<string> output = Task.Run(() => ReadBrokerOutputBounded(process));
                 if (!process.WaitForExit(15000))
                 {
                     process.Kill();
