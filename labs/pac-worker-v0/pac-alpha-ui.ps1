@@ -15,26 +15,26 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ('pac-alpha-lab-' + [Guid]::NewGuid
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'PAC Alpha | Worker Lab v0.1'
 $form.StartPosition = 'CenterScreen'
-$form.Size = New-Object System.Drawing.Size(830,570)
-$form.MinimumSize = New-Object System.Drawing.Size(730,510)
+$form.Size = [System.Drawing.Size]::new(830,570)
+$form.MinimumSize = [System.Drawing.Size]::new(730,510)
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $form.BackColor = [System.Drawing.Color]::FromArgb(246,248,252)
 
 $heading = New-Object System.Windows.Forms.Label
-$heading.Location = New-Object System.Drawing.Point(22,18)
-$heading.Size = New-Object System.Drawing.Size(760,34)
-$heading.Font = New-Object System.Drawing.Font('Segoe UI', 16, [System.Drawing.FontStyle]::Bold)
+$heading.Location = [System.Drawing.Point]::new(22,18)
+$heading.Size = [System.Drawing.Size]::new(760,34)
+$heading.Font = [System.Drawing.Font]::new('Segoe UI', 16, [System.Drawing.FontStyle]::Bold)
 $heading.Text = 'PAC | Thử nghiệm Worker cục bộ'
 $form.Controls.Add($heading)
 $warning = New-Object System.Windows.Forms.Label
-$warning.Location = New-Object System.Drawing.Point(22,58)
-$warning.Size = New-Object System.Drawing.Size(770,64)
+$warning.Location = [System.Drawing.Point]::new(22,58)
+$warning.Size = [System.Drawing.Size]::new(770,64)
 $warning.ForeColor = [System.Drawing.Color]::FromArgb(132,59,12)
 $warning.Text = 'CHỈ DÙNG DỮ LIỆU MẪU trên máy thử nghiệm. Worker mang quyền Windows hiện tại, CHƯA có AppContainer / ACL sandbox. Không dùng trên máy POS hoặc dữ liệu cá nhân.'
 $form.Controls.Add($warning)
 $hint = New-Object System.Windows.Forms.Label
-$hint.Location = New-Object System.Drawing.Point(22,128)
-$hint.Size = New-Object System.Drawing.Size(770,34)
+$hint.Location = [System.Drawing.Point]::new(22,128)
+$hint.Size = [System.Drawing.Size]::new(770,34)
 $hint.Text = 'Chỉ có ba thao tác đọc dữ liệu mẫu. Không thể chọn thư mục khác, ghi file hoặc chạy lệnh shell.'
 $form.Controls.Add($hint)
 
@@ -54,23 +54,23 @@ $stop.Enabled = $false
 $stop.BackColor = [System.Drawing.Color]::FromArgb(255,229,225)
 
 $status = New-Object System.Windows.Forms.Label
-$status.Location = New-Object System.Drawing.Point(22,234)
-$status.Size = New-Object System.Drawing.Size(765,26)
+$status.Location = [System.Drawing.Point]::new(22,234)
+$status.Size = [System.Drawing.Size]::new(765,26)
 $status.Text = 'Trạng thái: Sẵn sàng (ngoại tuyến)'
 $form.Controls.Add($status)
 $output = New-Object System.Windows.Forms.TextBox
-$output.Location = New-Object System.Drawing.Point(22,272)
-$output.Size = New-Object System.Drawing.Size(762,222)
+$output.Location = [System.Drawing.Point]::new(22,272)
+$output.Size = [System.Drawing.Size]::new(762,222)
 $output.Multiline = $true
 $output.ReadOnly = $true
 $output.ScrollBars = 'Vertical'
 $output.Anchor = 'Top,Bottom,Left,Right'
-$output.Font = New-Object System.Drawing.Font('Consolas', 10)
+$output.Font = [System.Drawing.Font]::new('Consolas', 10)
 $output.Text = "PAC Worker Lab v0.1 – chỉ dữ liệu mẫu, tiến trình riêng, giới hạn 4 giây."
 $form.Controls.Add($output)
 $footer = New-Object System.Windows.Forms.Label
-$footer.Location = New-Object System.Drawing.Point(22,507)
-$footer.Size = New-Object System.Drawing.Size(765,25)
+$footer.Location = [System.Drawing.Point]::new(22,507)
+$footer.Size = [System.Drawing.Size]::new(765,25)
 $footer.Anchor = 'Bottom,Left,Right'
 $footer.Text = 'read_text / inspect_file / list_directory – không gửi dữ liệu lên mạng.'
 $form.Controls.Add($footer)
