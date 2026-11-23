@@ -1,11 +1,13 @@
 # PAC Worker Lab v0.1 (experiment only)
 
-This is **not a Windows sandbox**, not a PAC installer, and not safe for personal or POS data. The compiled Bun executable inherits the identity and permissions of its caller. No GUI, browser, terminal, network task or write operation is exposed. Its only purpose is to validate packaging and one-request JSON IPC using an expendable `hello.txt` fixture.
+This is **not a Windows sandbox**, not a PAC installer, and not safe for personal or POS data. The UI is a limited local Windows Forms sample, not a security boundary. The compiled Bun executable inherits the identity and permissions of its caller. No GUI, browser, terminal, network task or write operation is exposed. Its only purpose is to validate packaging and one-request JSON IPC using an expendable `hello.txt` fixture.
 
 ## Expected contents
 
 - `pac-worker-lab.exe` — Bun-compiled single-request worker
 - `run-demo.ps1` — creates a temporary sample workspace, reads only the sample fixture, cleans up
+- `pac-alpha-ui.ps1` — optional Vietnamese Windows Forms lab interface (Windows PowerShell 5.1, STA)
+- `MO-PAC-ALPHA.cmd` — double-click launcher that does NOT elevate or bypass execution policy
 - `README.md` — these limitations
 
 ## Windows lab scope
@@ -21,3 +23,15 @@ The worker denies direct invocations unless `NODE_ENV=test` and `PAC_WORKER_LAB_
 ## Build and provenance
 
 Windows GitHub-hosted CI builds the executable from the PR source, runs the same smoke script, and uploads a short-retention artifact for review. Never trust or install a binary from an unreviewed source without checking the workflow and source revision.
+
+## Alpha Lab GUI (sample-only)
+
+On a **disposable Windows test account or VM**, extract all ZIP files to one directory. Double-click `MO-PAC-ALPHA.cmd` to open the Vietnamese Windows Forms UI. It has three pre-programmed operations: read sample `hello.txt`, inspect it, and list temporary sample files. Results, errors, running status and a Stop control are visible. It creates a disposable temporary workspace and deletes it when the window closes.
+
+The PowerShell GUI itself is not exercised interactively in headless GitHub Actions. CI checks **PowerShell syntax**, verifies the compiled worker EXE independently, and packages the script. Manual GUI/UI responsiveness testing in a disposable Windows desktop is still pending.
+
+Do not use Run as administrator. No Internet access or remote port is needed by the intended GUI workflow. If script execution is blocked by Windows policy, leave that policy in place; do not use ExecutionPolicy Bypass or turn off antivirus. This sample has no authority to grant worker access to your personal files.
+
+## Why this is not Alpha v0.2 acceptance
+
+It has no OS-enforced low-privilege worker identity, authenticated native broker, signed installer, release distribution, browser automation or coding agent. The same-account Bun child can potentially access the same files as its parent if exploited. Native restricted primary-token process tests still fail and remain a release blocker. The GUI is only a usability pilot for the three read-only sample operations.
