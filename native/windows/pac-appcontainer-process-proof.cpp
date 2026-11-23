@@ -145,16 +145,19 @@ static int child(int argc, wchar_t** argv) {
          missingCapability == NETISO_ERROR_TYPE_INTERNET_CLIENT ||
          missingCapability == NETISO_ERROR_TYPE_INTERNET_CLIENT_SERVER);
     const bool blockedImmediately = networkError == WSAEACCES;
-    const bool droppedWithMissingCapability =
-        networkError == WSAETIMEDOUT && missingNetworkPermission;
-    if (!blockedImmediately && !droppedWithMissingCapability) {
+    // WFP default-block may silently drop packets. Treat a timeout only as
+    // an observed non-connection, NOT definitive WFP filter attribution.
+    // The parent independently checks the listener is still live after the
+    // AppContainer attempt and that no child connection was accepted.
+    const bool timedOutWithoutConnection = networkError == WSAETIMEDOUT;
+    if (!blockedImmediately && !timedOutWithoutConnection) {
 
         // Missing/unsupported capability diagnosis is inconclusive; do NOT
         // report a timeout alone as successful sandbox isolation.
         std::cerr << "PAC_APPCONTAINER_NETWORK_FAILED: loopback_code="
                   << networkError << " netiso_api_code=" << diagnosisCode
                   << " missing_capability=" << static_cast<int>(missingCapability)
-                  << " (requires WSAEACCES or WFP timeout + missing capability)\n";
+                  << " (requires WSAEACCES or timeout with post-verified live listener)\n";
         if (networkError == WSAETIMEDOUT) return 120;
         if (networkError == ERROR_SUCCESS) return 121;
         return 122;
@@ -162,7 +165,7 @@ static int child(int argc, wchar_t** argv) {
     std::cout << "PAC_APPCONTAINER_CHILD_PASSED: appcontainer=true"
               << " granted_read=true"
               << " owner_only_read=ERROR_ACCESS_DENIED"
-              << " loopback=" << (blockedImmediately ? "WSAEACCES" : "WFP_TIMEOUT")
+              << " loopback=" << (blockedImmediately ? "WSAEACCES" : "UNREACHABLE_TIMEOUT")
               << " capability_diagnostic="
               << (missingNetworkPermission ? "missing" : "not_required")
               << "\n";
@@ -381,6 +384,41 @@ int wmain(int argc, wchar_t** argv) {
         SetLastError(exitCode);
         return fail("AppContainer child denied-access test failed");
     }
+    // Negative control: there must be no accepted connection from the
+    // AppContainer child. Use a non-blocking accept to check pending sockets.
+    u_long nonblockListener = 1;
+    if (ioctlsocket(network.listener, FIONBIO, &nonblockListener) == SOCKET_ERROR)
+        return fail("Set listener nonblocking");
+    SOCKET unexpected = accept(network.listener, nullptr, nullptr);
+    if (unexpected != INVALID_SOCKET) {
+        closesocket(unexpected);
+        SetLastError(ERROR_ACCESS_DENIED);
+        return fail("AppContainer connection unexpectedly reached listener");
+    }
+    if (WSAGetLastError() != WSAEWOULDBLOCK)
+        return fail("Listener negative-control accept");
+    u_long blockListener = 0;
+    if (ioctlsocket(network.listener, FIONBIO, &blockListener) == SOCKET_ERROR)
+        return fail("Restore listener blocking mode");
+
+    // Second POSITIVE control: the very same live listener must still
+    // accept owner TCP after the denied/timed-out AppContainer attempt.
+    SOCKET ownerAfter = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (ownerAfter == INVALID_SOCKET) return fail("Owner post-control socket");
+    if (connect(ownerAfter, reinterpret_cast<sockaddr*>(&target),
+                sizeof(target)) == SOCKET_ERROR) {
+        closesocket(ownerAfter);
+        return fail("Owner post-control cannot connect");
+    }
+    SOCKET acceptedAfter = accept(network.listener, nullptr, nullptr);
+    if (acceptedAfter == INVALID_SOCKET) {
+        closesocket(ownerAfter);
+        return fail("Owner post-control connection was not accepted");
+    }
+    closesocket(acceptedAfter);
+    closesocket(ownerAfter);
+    std::cout << "PAC_NETWORK_POST_CONTROL_PASSED: owner_tcp_loopback=true"
+              << " child_connection_not_accepted=true\n";
     std::cout << "PAC_APPCONTAINER_PROOF_PASSED: restricted_process=true"
               << " allowed_fixture=true owner_only_denied=true"
               << " capabilities=0 job_object=true network_loopback_blocked=true"
