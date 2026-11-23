@@ -6,6 +6,7 @@
 #define _WIN32_WINNT 0x0A00
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <netfw.h>
 #include <windows.h>
 #include <userenv.h>
 #include <sddl.h>
@@ -123,11 +124,37 @@ static int child(int argc, wchar_t** argv) {
         closesocket(sock);
     }
     WSACleanup();
-    if (networkError != WSAEACCES) {
-        // 120 means inconclusive timeout; 121 means security failure
-        // (connection succeeded); 122 is any other unexpected network error.
+    // Windows Filtering Platform may *drop* AppContainer packets, which
+    // manifests as WSAETIMEDOUT, not necessarily WSAEACCES. A timeout alone
+    // is inconclusive. Query the OS for the missing network capability
+    // before treating a dropped connection as an isolation proof.
+    NETISO_ERROR_TYPE missingCapability = NETISO_ERROR_TYPE_NONE;
+    DWORD diagnosisCode = ERROR_CALL_NOT_IMPLEMENTED;
+    HMODULE firewall = LoadLibraryW(L"Firewallapi.dll");
+    if (firewall) {
+        using DiagnoseConnect = DWORD (WINAPI*)(LPCWSTR, NETISO_ERROR_TYPE*);
+        auto diagnose = reinterpret_cast<DiagnoseConnect>(
+            GetProcAddress(firewall, "NetworkIsolationDiagnoseConnectFailureAndGetInfo"));
+        if (diagnose)
+            diagnosisCode = diagnose(L"127.0.0.1", &missingCapability);
+        FreeLibrary(firewall);
+    }
+    const bool missingNetworkPermission =
+        diagnosisCode == ERROR_SUCCESS &&
+        (missingCapability == NETISO_ERROR_TYPE_PRIVATE_NETWORK ||
+         missingCapability == NETISO_ERROR_TYPE_INTERNET_CLIENT ||
+         missingCapability == NETISO_ERROR_TYPE_INTERNET_CLIENT_SERVER);
+    const bool blockedImmediately = networkError == WSAEACCES;
+    const bool droppedWithMissingCapability =
+        networkError == WSAETIMEDOUT && missingNetworkPermission;
+    if (!blockedImmediately && !droppedWithMissingCapability) {
+
+        // Missing/unsupported capability diagnosis is inconclusive; do NOT
+        // report a timeout alone as successful sandbox isolation.
         std::cerr << "PAC_APPCONTAINER_NETWORK_FAILED: loopback_code="
-                  << networkError << " (expected WSAEACCES)\n";
+                  << networkError << " netiso_api_code=" << diagnosisCode
+                  << " missing_capability=" << static_cast<int>(missingCapability)
+                  << " (requires WSAEACCES or WFP timeout + missing capability)\n";
         if (networkError == WSAETIMEDOUT) return 120;
         if (networkError == ERROR_SUCCESS) return 121;
         return 122;
@@ -135,7 +162,10 @@ static int child(int argc, wchar_t** argv) {
     std::cout << "PAC_APPCONTAINER_CHILD_PASSED: appcontainer=true"
               << " granted_read=true"
               << " owner_only_read=ERROR_ACCESS_DENIED"
-              << " loopback=WSAEACCES\n";
+              << " loopback=" << (blockedImmediately ? "WSAEACCES" : "WFP_TIMEOUT")
+              << " capability_diagnostic="
+              << (missingNetworkPermission ? "missing" : "not_required")
+              << "\n";
     return 0;
 }
 
@@ -353,6 +383,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     std::cout << "PAC_APPCONTAINER_PROOF_PASSED: restricted_process=true"
               << " allowed_fixture=true owner_only_denied=true"
-              << " capabilities=0 job_object=true network_loopback_denied=true\n";
+              << " capabilities=0 job_object=true network_loopback_blocked=true"
+              << " (socket_denied_or_WFP_drop_with_missing_capability)\n";
     return 0;
 }
